@@ -28,9 +28,8 @@ PROFILE_LDFLAGS  = $(BASE_LDFLAGS) -mwindows -s
 PROFILE_LDLIBS   = $(BASE_LDLIBS) -ltdh -ldbghelp
 PROFILE_OUT      = runtime/bin/marco_profile.exe
 PROFILE_OBJDIR   = build/obj/profile
-# Exclude ETW, Diagnostics, and Analysis Toolkit
-PROFILE_EXCLUDE  = src/core/etw_controller.cpp src/ui/ui_diagnostics.cpp src/core/analysis_toolkit.cpp
-PROFILE_SRCS     = $(filter-out $(PROFILE_EXCLUDE),$(wildcard src/core/*.cpp src/ui/*.cpp))
+# Profile now includes ETW, Diagnostics, and Analysis Toolkit for forensics
+PROFILE_SRCS     = $(wildcard src/core/*.cpp src/ui/*.cpp)
 PROFILE_OBJS     = $(patsubst src/%.cpp,$(PROFILE_OBJDIR)/%.o,$(PROFILE_SRCS))
 
 # ==============================================================================
