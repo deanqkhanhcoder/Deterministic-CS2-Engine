@@ -42,8 +42,8 @@ void KeyDown(Key k) {
     EnsureInit();
     int idx = ki(k);
     // [FIX BUG #2] Check SendInput return — 0 means UIPI/elevation blocked injection
-    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_DOWN key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     UINT sent = SendInput(1, &s_keyDown[idx], sizeof(INPUT));
+    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_DOWN key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent == 0) {
         DLOG_ERR(Injection, "SendInput FAILED for %s DOWN (err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), GetLastError());
     }
@@ -54,8 +54,8 @@ void KeyUp(Key k) {
     EnsureInit();
     int idx = ki(k);
     // [FIX BUG #2] Check SendInput return
-    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_UP key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     UINT sent = SendInput(1, &s_keyUp[idx], sizeof(INPUT));
+    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_UP key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent == 0) {
         DLOG_ERR(Injection, "SendInput FAILED for %s UP (err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), GetLastError());
     }
@@ -67,8 +67,8 @@ void KeyDownUp(Key k) {
     int idx = ki(k);
     INPUT batch[2] = { s_keyDown[idx], s_keyUp[idx] };
     // [FIX BUG #2] Check SendInput return
-    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_DOWNUP key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     UINT sent = SendInput(2, batch, sizeof(INPUT));
+    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_DOWNUP key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent < 2) {
         DLOG_ERR(Injection, "SendInput FAILED for %s DOWN+UP (sent=%u, err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), sent, GetLastError());
     }
@@ -78,6 +78,7 @@ void KeyDownUp(Key k) {
 void SendBatch(INPUT* inputs, int count) {
     if (count > 0) {
         UINT sent = SendInput(count, inputs, sizeof(INPUT));
+        DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_DISPATCH_BATCH count=%d", count);
         if (sent < (UINT)count) {
             DLOG_ERR(Injection, "SendInput batch FAILED (requested=%d sent=%u err=%lu)", count, sent, GetLastError());
         }
