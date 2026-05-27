@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <mutex>
+#include "workspace.h"
 
 namespace dlog {
 
@@ -15,7 +16,7 @@ static FILE* s_logFile = nullptr;
 void Init() {
     std::lock_guard<std::mutex> lock(s_logMutex);
     if (!s_logFile) {
-        fopen_s(&s_logFile, "runtime/logs/marco_debug.log", "w");
+        fopen_s(&s_logFile, "marco_debug.log", "w");
     }
 }
 

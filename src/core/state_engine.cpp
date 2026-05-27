@@ -64,6 +64,8 @@ void PublishEngineState() {
     }
     pub.lastCounterMs = s_state.lastCounterMs;
 
+    LOG_FIRE_TRACE("PUBLISH_STATE", s_state.autoFire.fireGenerationId);
+
     uint32_t seq = s_pubSeq.load(std::memory_order_relaxed);
     s_pubSeq.store(seq + 1, std::memory_order_release);
     std::atomic_thread_fence(std::memory_order_release);
@@ -535,5 +537,20 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 }
 
 void SetHookInstalled(bool v) { s_hookInstalled = v; NotifyUI(); }
+
+void LogFireTrace(const char* phase, uint64_t gen) {
+#if MARCO_DEBUG_FORENSIC
+    char buf[256];
+    snprintf(buf, sizeof(buf), "[FIRE_TRACE] t=%lldus tid=%lu gen=%llu phase=%s vx=%d vy=%d logical=W%d A%d S%d D%d",
+        timing::NowUs(), GetCurrentThreadId(), gen, phase,
+        s_state.axisState[1] == AxisState::Positive ? 1 : (s_state.axisState[1] == AxisState::Negative ? -1 : 0),
+        s_state.axisState[0] == AxisState::Positive ? 1 : (s_state.axisState[0] == AxisState::Negative ? -1 : 0),
+        s_state.logical[ki(Key::W)] ? 1 : 0,
+        s_state.logical[ki(Key::A)] ? 1 : 0,
+        s_state.logical[ki(Key::S)] ? 1 : 0,
+        s_state.logical[ki(Key::D)] ? 1 : 0);
+    dlog::Write(dlog::Subsystem::FireTrace, dlog::Level::Trace, __FILE__, __LINE__, "%s", (int64_t)buf);
+#endif
+}
 
 } // namespace engine

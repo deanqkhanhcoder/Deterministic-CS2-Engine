@@ -158,11 +158,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SAFE_STARTUP_TRACE("MUTEX_CHECK");
 
     // ── Prevent multiple instances ──
+#ifndef MARCO_DEBUG_FORENSIC
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"CS2MacroSuite_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"CS2 Macro Suite is already running.", L"Error", MB_ICONERROR);
         return 1;
     }
+#endif
 
     // ── System setup ──
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -236,7 +238,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // ── Create UI window ──
     HWND uiHwnd = ui::Create(hInst, msgHwnd);
     if (!uiHwnd) {
+#ifndef MARCO_DEBUG_FORENSIC
         MessageBoxW(nullptr, L"Failed to create UI window.", L"Error", MB_ICONERROR);
+#endif
         bhop::Shutdown();
         target_platform::Shutdown();
         timing::StopTimerThread();
@@ -248,8 +252,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SAFE_STARTUP_TRACE("HOOK_INSTALL");
     // ── Install hooks ──
     if (!capture::Install(msgHwnd)) {
+#ifndef MARCO_DEBUG_FORENSIC
         MessageBoxW(nullptr, L"Failed to install input hooks.\nRun as Administrator?",
                     L"Error", MB_ICONERROR);
+#endif
         bhop::Shutdown();
         target_platform::Shutdown();
         timing::StopTimerThread();
@@ -372,7 +378,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 #endif
     dlog::Shutdown();
     timeEndPeriod(1);
+#ifndef MARCO_DEBUG_FORENSIC
     if (mutex) { ReleaseMutex(mutex); CloseHandle(mutex); }
+#endif
 
     return 0;
 }

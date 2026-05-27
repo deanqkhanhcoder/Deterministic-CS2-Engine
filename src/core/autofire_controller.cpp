@@ -56,6 +56,10 @@ int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch, std::function<vo
         input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
         input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
         SendInput(1, &input, sizeof(INPUT));
+        {
+            std::lock_guard<std::mutex> lock(s_stateMutex);
+            s_state.autoFire.hasDispatchedShot = true;
+        }
     };
     
     if (preFireUs == 0) {
@@ -80,6 +84,7 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
             input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
             input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
             SendInput(1, &input, sizeof(INPUT));
+            s_state.autoFire.hasDispatchedShot = true;
         }
         
         // 1. Release injected counter keys
@@ -121,6 +126,12 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
         s_state.autoFire.suspendedMovementMask = 0;
         s_state.autoFire.injectedCounterMask = 0;
         
+        if (!s_state.autoFire.hasDispatchedShot) {
+            DLOG_ERR(Engine, "HARD WARNING: RESTORE_PHASE occurred BEFORE SHOT_DISPATCH on gen=%llu", s_state.autoFire.fireGenerationId);
+            // Log generation dump
+            engine::LogFireTrace("RESTORE_OVERLAP_VIOLATION", s_state.autoFire.fireGenerationId);
+        }
+
         LOG_FIRE_TRACE("RESTORE_PHASE", s_state.autoFire.fireGenerationId);
         DLOG_TRACE(Runtime, "AutoFire Cancelled & Movement Restored");
     }
@@ -169,6 +180,7 @@ bool OnLButtonDown() {
         
         // Start a new fire generation for tracking
         s_state.autoFire.fireGenerationId++;
+        s_state.autoFire.hasDispatchedShot = false;
 
         auto applyBrake = [&](Axis ax) {
             for (int i = 0; i < 2; ++i) {

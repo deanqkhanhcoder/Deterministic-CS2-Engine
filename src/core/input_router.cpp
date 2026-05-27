@@ -15,7 +15,6 @@
 namespace engine {
 
 void HandleKeyDown(Key k, bool routeSemantic) {
-    CancelPendingShot();
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
@@ -44,8 +43,12 @@ void HandleKeyDown(Key k, bool routeSemantic) {
 
         // --- PHYSICAL LAYER (Always Tracked) ---
         if (s_state.phys[ki_k]) return; // Already physically down
+        
+        CancelPendingShotLocked(batch); // Only cancel on true edge
+        
         s_state.phys[ki_k]     = true;
         s_state.downTimeUs[ki_k] = nowUs;
+        LOG_FIRE_TRACE("PHYS_MUTATION_DOWN", s_state.autoFire.fireGenerationId);
 
         timing::CancelTimer(k);
         s_state.expectedTimerId[ki(k)] = 0;
@@ -91,7 +94,6 @@ void HandleKeyDown(Key k, bool routeSemantic) {
 //  HANDLE KEY UP  (§16)
 // ════════════════════════════════════════════════════════════════
 void HandleKeyUp(Key k, bool routeSemantic) {
-    CancelPendingShot();
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
@@ -128,10 +130,13 @@ void HandleKeyUp(Key k, bool routeSemantic) {
                 ResolveAxis(ax, batch);
             }
         } else {
+            CancelPendingShotLocked(batch); // Only cancel on true edge
+            
             int64_t heldUs         = nowUs - s_state.downTimeUs[ki_k];
             s_state.heldDurUs[ki_k] = heldUs;
             s_state.phys[ki_k]     = false;
             s_state.downTimeUs[ki_k] = 0;
+            LOG_FIRE_TRACE("PHYS_MUTATION_UP", s_state.autoFire.fireGenerationId);
 
             // --- SEMANTIC ROUTING LAYER ---
             if (routeSemantic) {

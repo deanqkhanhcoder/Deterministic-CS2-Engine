@@ -71,6 +71,8 @@ struct alignas(64) State {
         uint8_t suspendedMovementMask = 0;
         uint8_t injectedCounterMask = 0;
         uint64_t expectedShotId = 0;
+        uint64_t fireGenerationId = 0;
+        bool hasDispatchedShot = false;
     } autoFire;
 
     // ── Click history (circular buffer) ──

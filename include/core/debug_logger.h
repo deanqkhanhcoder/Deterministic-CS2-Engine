@@ -30,6 +30,7 @@ enum class Subsystem {
     Errors,
     Warnings,
     Crashes,
+    FireTrace,
     COUNT
 };
 
@@ -53,6 +54,8 @@ void Flush(); // Force flush
 #define DLOG_WARN(sys, ...)  do {} while(0)
 #define DLOG_ERR(sys, ...)   do {} while(0)
 #define DLOG_FATAL(sys, ...) do {} while(0)
+
+#define LOG_FIRE_TRACE(phase, gen) do {} while(0)
 
 namespace dlog {
 inline void Init() {}

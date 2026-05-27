@@ -22,6 +22,8 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
                 return; // Stale or cancelled shot
             }
             s_state.autoFire.state = FireState::Fired;
+            s_state.autoFire.hasDispatchedShot = true;
+            LOG_FIRE_TRACE("SHOT_DISPATCH", s_state.autoFire.fireGenerationId);
         }
         
         // Inject the mouse click!
@@ -75,6 +77,7 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
                     }
                     s_state.autoFire.suspendedMovementMask = 0;
                     s_state.autoFire.state = FireState::Restoring;
+                    LOG_FIRE_TRACE("MOVEMENT_RESTORE", s_state.autoFire.fireGenerationId);
                     DLOG_TRACE(Runtime, "AutoFire Brake Finished: Movement Restored");
                 }
             }
