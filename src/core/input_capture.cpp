@@ -218,27 +218,27 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
     // --- 1. GLOBAL HOTKEYS (Before Focus Filter) ---
     if (vk == VK_F1) {
-        if (isDown && !s_hkDownF1) { s_hkDownF1 = true; PostMessage(s_hwnd, WM_BHOP_TOGGLE, 0, 0); }
+        if (isDown && !s_hkDownF1) { s_hkDownF1 = true; SendNotifyMessageW(s_hwnd, WM_BHOP_TOGGLE, 0, 0); }
         else if (isUp) s_hkDownF1 = false;
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F2) {
-        if (isDown && !s_hkDownF2) { s_hkDownF2 = true; PostMessage(s_hwnd, WM_BHOP_CYCLE_MODE, 0, 0); }
+        if (isDown && !s_hkDownF2) { s_hkDownF2 = true; SendNotifyMessageW(s_hwnd, WM_BHOP_CYCLE_MODE, 0, 0); }
         else if (isUp) s_hkDownF2 = false;
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F3) {
-        if (isDown && !s_hkDownF3) { s_hkDownF3 = true; PostMessage(s_hwnd, WM_CYCLE_PROFILE, 0, 0); }
+        if (isDown && !s_hkDownF3) { s_hkDownF3 = true; SendNotifyMessageW(s_hwnd, WM_CYCLE_PROFILE, 0, 0); }
         else if (isUp) s_hkDownF3 = false;
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F6) {
-        if (isDown && !s_hkDownF6) { s_hkDownF6 = true; PostMessage(s_hwnd, WM_TOGGLE_SUSPEND, 0, 0); }
+        if (isDown && !s_hkDownF6) { s_hkDownF6 = true; SendNotifyMessageW(s_hwnd, WM_TOGGLE_SUSPEND, 0, 0); }
         else if (isUp) s_hkDownF6 = false;
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F8) {
-        if (isDown && !s_hkDownF8) { s_hkDownF8 = true; PostMessage(s_hwnd, WM_CLOSE, 0, 0); }
+        if (isDown && !s_hkDownF8) { s_hkDownF8 = true; SendNotifyMessageW(s_hwnd, WM_CLOSE, 0, 0); }
         else if (isUp) s_hkDownF8 = false;
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
