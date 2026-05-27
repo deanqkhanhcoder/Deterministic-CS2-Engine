@@ -65,6 +65,7 @@ struct alignas(64) TimerSlot {
     int64_t     expireUs  = 0;       // QPC microsecond target
     uint64_t    id        = 0;
     Key         key       = Key::W;
+    std::function<void()> cb = nullptr;
 };
 
 static constexpr int NUM_SLOTS = 5;  // One per WASD key + Mouse1
@@ -299,13 +300,18 @@ static void TimerThreadFunc() {
             }
 #endif
 
+            // ADD JITTER LOG FOR FIRE TRACE
+            DLOG_INFO(Timing, "[FIRE_TRACE] TIMER_WAKE_JITTER id=%llu key=%s jitter=%lld", slot.id, reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), jitter);
+
             // Post completion to main thread
             DLOG_INFO(Timing, "TimerThreadFunc: Posting WM_TIMER_EXPIRED for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
-            PostMessage(s_targetHwnd, WM_TIMER_EXPIRED,
-                        (WPARAM)slot.key, (LPARAM)slot.id);
+            if (slot.cb) {
+                slot.cb();
+            } else {
+                PostMessage(s_targetHwnd, WM_TIMER_EXPIRED,
+                            (WPARAM)slot.key, (LPARAM)slot.id);
+            }
 
-            // ADD JITTER LOG FOR FIRE TRACE
-            DLOG_TRACE(Timing, "[FIRE_TRACE] TIMER_WAKE_JITTER id=%llu key=%s jitter=%lld", slot.id, reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), jitter);
         } else {
             lock.unlock();
         }
@@ -339,11 +345,14 @@ void StopTimerThread() {
 }
 
 uint64_t ScheduleTimerUs(Key key, int64_t durationUs) {
-    int64_t expireUs = NowUs() + durationUs;
+    return ScheduleTimerAtUs(key, NowUs() + durationUs);
+}
+
+uint64_t ScheduleTimerAtUs(Key key, int64_t expireUs, std::function<void()> cb) {
     uint64_t id = s_nextTimerId.fetch_add(1, std::memory_order_relaxed);
     bool wakeRequired = false;
 
-    DLOG_INFO(Timing, "ScheduleTimerUs: %s for %lld us (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(key)]), durationUs, id);
+    DLOG_INFO(Timing, "ScheduleTimerAtUs: %s for %lld us target (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(key)]), expireUs, id);
 
     {
         std::unique_lock<std::mutex> lock(s_spinlock);
@@ -364,6 +373,7 @@ uint64_t ScheduleTimerUs(Key key, int64_t durationUs) {
         slot.expireUs   = expireUs;
         slot.id         = id;
         slot.key        = key;
+        slot.cb         = cb;
         
         uint8_t mask = s_activeMask.load(std::memory_order_relaxed);
         mask |= (1 << ki(key));

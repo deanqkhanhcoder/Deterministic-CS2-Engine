@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <atomic>
 #include <windows.h>
+#include <functional>
 
 namespace timing {
 
@@ -23,6 +24,7 @@ void   StopTimerThread();
 // Schedule a one-shot timer. On expiry, posts WM_TIMER_EXPIRED to hwnd.
 // wParam = (WPARAM)key, lParam = (LPARAM)timerId
 uint64_t ScheduleTimerUs(Key key, int64_t durationUs);
+uint64_t ScheduleTimerAtUs(Key key, int64_t targetUs, std::function<void()> cb = nullptr);
 uint64_t ScheduleTimer(Key key, int durationMs);
 void   CancelTimer(Key key);
 bool   AreTimersActive();

@@ -5,6 +5,7 @@
 #include "runtime_config.h"
 #include <mutex>
 #include <atomic>
+#include <functional>
 
 namespace cfg_rt {
     inline int    TAP_SPAM_HALF_LIFE_MS() { return rcfg::Get().tapSpamHalfLifeMs; }
@@ -61,8 +62,8 @@ void ReconcileInternal(bool suspending, InjectionBatch& batch);
 
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs);
 
-// Autofire
-int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch);
+// Returns the stabilization duration (preFireUs), or 0 if immediate shot/no shot
+int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch, std::function<void()>& outShotCallback);
 void CancelPendingShotLocked(InjectionBatch& batch);
 
 } // namespace engine
