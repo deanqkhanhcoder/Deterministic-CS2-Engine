@@ -25,24 +25,29 @@ namespace cfg_rt {
 
 namespace engine {
 
+extern State s_state;
+extern std::mutex s_stateMutex;
+extern std::atomic<bool> s_suspendedAtomic;
+extern bool s_hookInstalled;
+
+void LogFireTrace(const char* phase, uint64_t gen);
+#define LOG_FIRE_TRACE(phase, gen) engine::LogFireTrace(phase, gen)
+
 struct alignas(64) InjectionBatch {
     struct Event { Key k; bool down; };
     Event events[16];
     int count = 0;
     void push(Key k, bool down) { if (count < 16) events[count++] = {k, down}; }
     void flush() {
+        if (count == 0) return;
+        LOG_FIRE_TRACE("BATCH_FLUSH_BEGIN", s_state.autoFire.fireGenerationId);
         for (int i = 0; i < count; ++i) {
             if (events[i].down) injection::KeyDown(events[i].k);
             else injection::KeyUp(events[i].k);
         }
+        LOG_FIRE_TRACE("BATCH_FLUSH_COMPLETE", s_state.autoFire.fireGenerationId);
     }
 };
-
-extern State s_state;
-extern std::mutex s_stateMutex;
-extern std::atomic<bool> s_suspendedAtomic;
-extern bool s_hookInstalled;
-
 void PublishEngineState();
 void NotifyUI();
 
