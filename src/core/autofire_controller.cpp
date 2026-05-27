@@ -127,7 +127,7 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
         s_state.autoFire.injectedCounterMask = 0;
         
         if (!s_state.autoFire.hasDispatchedShot) {
-            DLOG_ERR(Engine, "HARD WARNING: RESTORE_PHASE occurred BEFORE SHOT_DISPATCH on gen=%llu", s_state.autoFire.fireGenerationId);
+            DLOG_ERR(Runtime, "HARD WARNING: RESTORE_PHASE occurred BEFORE SHOT_DISPATCH on gen=%llu", s_state.autoFire.fireGenerationId);
             // Log generation dump
             engine::LogFireTrace("RESTORE_OVERLAP_VIOLATION", s_state.autoFire.fireGenerationId);
         }

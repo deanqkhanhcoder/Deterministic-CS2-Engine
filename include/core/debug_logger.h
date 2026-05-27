@@ -55,7 +55,9 @@ void Flush(); // Force flush
 #define DLOG_ERR(sys, ...)   do {} while(0)
 #define DLOG_FATAL(sys, ...) do {} while(0)
 
+#ifndef LOG_FIRE_TRACE
 #define LOG_FIRE_TRACE(phase, gen) do {} while(0)
+#endif
 
 namespace dlog {
 inline void Init() {}
