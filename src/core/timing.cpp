@@ -273,9 +273,6 @@ static void TimerThreadFunc() {
             (void)jitter;
             int64_t oversleep = std::max(0LL, actualWakeUs - slot.expireUs);
 
-            // ADD JITTER LOG FOR FIRE TRACE
-            DLOG_TRACE(Timing, "[FIRE_TRACE] TIMER_WAKE_JITTER id=%llu key=%s jitter=%lld", slot.id, reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), jitter);
-
 #if MARCO_ENABLE_TELEMETRY
             telemetry::g_timerJitter.Add(jitter);
             telemetry::g_oversleep.Add(oversleep);
@@ -306,6 +303,9 @@ static void TimerThreadFunc() {
             DLOG_INFO(Timing, "TimerThreadFunc: Posting WM_TIMER_EXPIRED for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
             PostMessage(s_targetHwnd, WM_TIMER_EXPIRED,
                         (WPARAM)slot.key, (LPARAM)slot.id);
+
+            // ADD JITTER LOG FOR FIRE TRACE
+            DLOG_TRACE(Timing, "[FIRE_TRACE] TIMER_WAKE_JITTER id=%llu key=%s jitter=%lld", slot.id, reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), jitter);
         } else {
             lock.unlock();
         }
