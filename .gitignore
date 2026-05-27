@@ -1,0 +1,25 @@
+# Build Artifacts
+build/
+obj/
+.agent/
+*.exe
+*.o
+*.obj
+*.pdb
+*.ilk
+
+# Runtime Output
+runtime/logs/
+runtime/captures/
+runtime/artifacts/
+*.log
+*.csv
+*.png
+
+# Python caches
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
