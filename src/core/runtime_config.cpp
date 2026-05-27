@@ -260,4 +260,12 @@ void Init() {
     s_seq.store(0, std::memory_order_release);
 }
 
+bool CanPersistRuntimeState() {
+    RuntimeConfig active = Get();
+    if (active.safeModeEnabled || !active.bhopEnabled) {
+        return false;
+    }
+    return true;
+}
+
 } // namespace rcfg

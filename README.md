@@ -1,6 +1,6 @@
 <div align="center">
   
-# Deterministic CS2 Engine (V26)
+# Deterministic CS2 Engine (V26.1 Stable Release)
 ### *Production-Grade Mathematical Physics Engine for Counter-Strike 2*
 
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
@@ -14,7 +14,7 @@
 
 ## 📖 Project Overview
 
-The **V26 Deterministic-CS2-Engine** is a heavily optimized, mathematically deterministic input simulation framework designed to perfectly synchronize hardware HID inputs with the Sub-Tick kinematics of Counter-Strike 2. 
+The **V26.1 Deterministic-CS2-Engine** is a heavily optimized, mathematically deterministic input simulation framework designed to perfectly synchronize hardware HID inputs with the Sub-Tick kinematics of Counter-Strike 2. 
 
 Unlike conventional macro engines that rely on arbitrary sleep timers, this engine operates on a mathematically proven Look-Up Table (LUT) driven by the actual CS2 Source 2 physics formulas. It guarantees exact, frame-perfect braking and strafing interpolation.
 

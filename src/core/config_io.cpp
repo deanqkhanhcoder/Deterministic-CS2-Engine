@@ -9,10 +9,19 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+#include "debug_logger.h"
 
 namespace config_io {
 
 static wchar_t s_iniPath[MAX_PATH] = {};
+static std::atomic<bool> s_shutdownBarrier{false};
+static std::atomic<uint64_t> s_persistenceGeneration{0};
+
+void SetShutdownBarrier() {
+    s_shutdownBarrier.store(true, std::memory_order_seq_cst);
+    DLOG_INFO(Config, "[SHUTDOWN] [PERSIST_BARRIER] Persistence barrier activated.");
+}
 
 static void EnsurePath() {
     if (s_iniPath[0]) return;
@@ -156,6 +165,23 @@ bool Load(RuntimeConfig& c) {
 //  SAVE
 // ════════════════════════════════════════════════════════════════
 bool Save(const RuntimeConfig& c) {
+    uint64_t gen = s_persistenceGeneration.fetch_add(1, std::memory_order_relaxed);
+    DWORD tid = GetCurrentThreadId();
+    (void)gen; // Suppress unused variable warning in Release/Profile builds
+    (void)tid; // Suppress unused variable warning in Release/Profile builds
+
+    if (s_shutdownBarrier.load(std::memory_order_seq_cst)) {
+        DLOG_WARN(Config, "[PERSIST] [SAVE_REJECTED] Rejected by ShutdownPersistenceBarrier. Gen: %llu, Thread: %lu", gen, tid);
+        return false;
+    }
+
+    if (!rcfg::CanPersistRuntimeState()) {
+        DLOG_WARN(Config, "[PERSIST] [SAVE_REJECTED] Rejected by Global Persistence Freeze Layer. Gen: %llu, Thread: %lu", gen, tid);
+        return false;
+    }
+
+    DLOG_INFO(Config, "[PERSIST] [SAVE_ALLOWED] Persistence allowed. Gen: %llu, Thread: %lu", gen, tid);
+    
     EnsurePath();
 
     const wchar_t* S = L"Strafe";

@@ -132,4 +132,7 @@ namespace rcfg {
 
     // Initialize with defaults
     void Init();
+
+    // Check if the global active state is eligible for disk persistence
+    bool CanPersistRuntimeState();
 }

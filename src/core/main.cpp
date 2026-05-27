@@ -364,6 +364,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // Safe to call Get() now - all threads stopped
     RuntimeConfig finalCfg = rcfg::Get();
     config_io::Save(finalCfg);
+    
+    // Set the barrier to strictly reject any future disk saves during destructors
+    config_io::SetShutdownBarrier();
 #if MARCO_ENABLE_UI
     ui::Destroy();
 #endif

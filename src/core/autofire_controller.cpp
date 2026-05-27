@@ -46,9 +46,11 @@ int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch) {
 }
 
 void CancelPendingShotLocked(InjectionBatch& batch) {
-    if (s_state.autoFire.active) {
-        timing::CancelTimer(Key::Mouse1);
-        s_state.autoFire.active = false;
+    if (s_state.autoFire.state != FireState::Idle) {
+        if (s_state.autoFire.state == FireState::Stabilizing) {
+            timing::CancelTimer(Key::Mouse1);
+        }
+        s_state.autoFire.state = FireState::Idle;
         
         // 1. Release injected counter keys
         for (int i = 0; i < 4; ++i) {
@@ -120,7 +122,7 @@ bool OnLButtonDown() {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         
         // If already waiting for a shot, cancel the old one and re-evaluate
-        if (s_state.autoFire.active) {
+        if (s_state.autoFire.state != FireState::Idle) {
             CancelPendingShotLocked(batch);
         }
 
@@ -150,9 +152,16 @@ bool OnLButtonDown() {
         applyBrake(Axis::Y); applyBrake(Axis::X);
         
         if (maxBrakeUs > 0) {
-            s_state.autoFire.active = true;
-            s_state.autoFire.expectedShotId = timing::ScheduleTimerUs(Key::Mouse1, maxBrakeUs);
-            DLOG_TRACE(Runtime, "AutoFire Scheduled: %lld us", maxBrakeUs);
+            s_state.autoFire.state = FireState::Stabilizing;
+            
+            // [FIX BUG #2] Pre-fire Subtick Stabilization
+            // Instead of delaying the shot by full maxBrakeUs (sluggish/cắm đất),
+            // wait exactly 1 subtick quantum for crosshair stabilization.
+            int64_t preFireUs = 15625 + (int64_t)(rc.subtickPaddingTicks * 15625.0);
+            if (maxBrakeUs < preFireUs) preFireUs = maxBrakeUs; // don't delay longer than brake
+            
+            s_state.autoFire.expectedShotId = timing::ScheduleTimerUs(Key::Mouse1, preFireUs);
+            DLOG_TRACE(Runtime, "AutoFire Scheduled: %lld us (Brake total: %lld us)", preFireUs, maxBrakeUs);
         }
         PublishEngineState();
     }

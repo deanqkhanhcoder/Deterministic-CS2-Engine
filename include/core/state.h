@@ -30,6 +30,13 @@ struct MemoryState {
     int64_t lastConflictExitTimeMs[2]    = {};
 };
 
+enum class FireState {
+    Idle,
+    Stabilizing,
+    Fired,
+    Restoring
+};
+
 struct alignas(64) State {
     // ── Per-key state (indexed by Key enum: W=0, S=1, A=2, D=3, M1=4) ──
     bool    phys[5]             = {};
@@ -60,7 +67,7 @@ struct alignas(64) State {
     bool suspended = false;
 
     struct {
-        bool active = false;
+        FireState state = FireState::Idle;
         uint8_t suspendedMovementMask = 0;
         uint8_t injectedCounterMask = 0;
         uint64_t expectedShotId = 0;

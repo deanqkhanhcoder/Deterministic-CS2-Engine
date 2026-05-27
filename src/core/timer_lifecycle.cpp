@@ -18,9 +18,10 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
     if (k == Key::Mouse1) {
         {
             std::lock_guard<std::mutex> lock(s_stateMutex);
-            if (!s_state.autoFire.active || s_state.autoFire.expectedShotId != expectedTimerId) {
+            if (s_state.autoFire.state != FireState::Stabilizing || s_state.autoFire.expectedShotId != expectedTimerId) {
                 return; // Stale or cancelled shot
             }
+            s_state.autoFire.state = FireState::Fired;
         }
         
         // Inject the mouse click!
@@ -29,10 +30,11 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
         input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
         input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected so we don't swallow it again
         SendInput(1, &input, sizeof(INPUT));
-        DLOG_TRACE(Runtime, "AutoFire Executed: Left Down injected");
+        DLOG_TRACE(Runtime, "AutoFire Executed: Left Down injected (1 quantum delay)");
         
-        // Restore keys
-        CancelPendingShot();
+        // [FIX BUG #2] DO NOT CALL CancelPendingShot() HERE
+        // The brake routine needs to continue running until maxBrakeUs completes.
+        // Movement will be restored naturally when the counter keys expire below.
         return;
     }
 
@@ -49,10 +51,35 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
                        reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), s_state.expectedTimerId[ki_k], expectedTimerId);
             return;
         }
+        
+        // Release logical key
         if (s_state.logical[ki_k] && !s_state.phys[ki_k]) {
             s_state.logical[ki_k] = false;
             batch.push(k, false);
         }
+        
+        // [FIX BUG #2] Restore movement if this was the last counter key of a fired shot
+        if (s_state.autoFire.state == FireState::Fired) {
+            if (s_state.autoFire.injectedCounterMask & (1 << ki_k)) {
+                s_state.autoFire.injectedCounterMask &= ~(1 << ki_k);
+                
+                // If all counter keys have finished braking, restore originally held movement keys
+                if (s_state.autoFire.injectedCounterMask == 0) {
+                    for (int i = 0; i < 4; ++i) {
+                        if (s_state.autoFire.suspendedMovementMask & (1 << i)) {
+                            if (s_state.phys[i]) {
+                                batch.push(static_cast<Key>(i), true);
+                                s_state.logical[i] = true;
+                            }
+                        }
+                    }
+                    s_state.autoFire.suspendedMovementMask = 0;
+                    s_state.autoFire.state = FireState::Restoring;
+                    DLOG_TRACE(Runtime, "AutoFire Brake Finished: Movement Restored");
+                }
+            }
+        }
+        
         PublishEngineState();
     }
     batch.flush();
