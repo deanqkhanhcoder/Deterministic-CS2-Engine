@@ -4,6 +4,7 @@
 
 #include "injection.h"
 #include "debug_logger.h"
+#include "timing.h"
 #include <windows.h>
 
 namespace injection {
@@ -42,7 +43,10 @@ void KeyDown(Key k) {
     EnsureInit();
     int idx = ki(k);
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_BEGIN key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
+    int64_t preSyscall = timing::NowUs();
     UINT sent = SendInput(1, &s_keyDown[idx], sizeof(INPUT));
+    int64_t postSyscall = timing::NowUs();
+    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent == 0) {
         DLOG_ERR(Injection, "SendInput FAILED for %s DOWN (err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), GetLastError());
@@ -54,7 +58,10 @@ void KeyUp(Key k) {
     EnsureInit();
     int idx = ki(k);
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_BEGIN key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
+    int64_t preSyscall = timing::NowUs();
     UINT sent = SendInput(1, &s_keyUp[idx], sizeof(INPUT));
+    int64_t postSyscall = timing::NowUs();
+    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent == 0) {
         DLOG_ERR(Injection, "SendInput FAILED for %s UP (err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), GetLastError());
@@ -67,7 +74,10 @@ void KeyDownUp(Key k) {
     int idx = ki(k);
     INPUT batch[2] = { s_keyDown[idx], s_keyUp[idx] };
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_BEGIN key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
+    int64_t preSyscall = timing::NowUs();
     UINT sent = SendInput(2, batch, sizeof(INPUT));
+    int64_t postSyscall = timing::NowUs();
+    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent < 2) {
         DLOG_ERR(Injection, "SendInput FAILED for %s DOWN+UP (sent=%u, err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), sent, GetLastError());
@@ -78,7 +88,10 @@ void KeyDownUp(Key k) {
 void SendBatch(INPUT* inputs, int count) {
     if (count > 0) {
         DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_BEGIN count=%d", count);
+        int64_t preSyscall = timing::NowUs();
         UINT sent = SendInput(count, inputs, sizeof(INPUT));
+        int64_t postSyscall = timing::NowUs();
+        DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
         DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END count=%d", count);
         if (sent < (UINT)count) {
             DLOG_ERR(Injection, "SendInput batch FAILED (requested=%d sent=%u err=%lu)", count, sent, GetLastError());

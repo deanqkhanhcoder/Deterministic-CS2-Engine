@@ -162,6 +162,17 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         ~HookDepthGuard() { s_hookDepth--; }
     } guard;
 
+    struct HookTimer {
+        int64_t start;
+        HookTimer() : start(timing::NowUs()) {}
+        ~HookTimer() {
+            int64_t end = timing::NowUs();
+            if (end - start > 1000) {
+                DLOG_TRACE(Capture, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
+            }
+        }
+    } _hookTimer;
+
     if (s_hookDepth > 1) {
         DLOG_ERR(Hook, "[FIRE_TRACE] RE-ENTRANCY DETECTED depth=%d", s_hookDepth);
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
@@ -351,6 +362,17 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         HookDepthGuard() { s_hookDepth++; }
         ~HookDepthGuard() { s_hookDepth--; }
     } guard;
+
+    struct HookTimer {
+        int64_t start;
+        HookTimer() : start(timing::NowUs()) {}
+        ~HookTimer() {
+            int64_t end = timing::NowUs();
+            if (end - start > 1000) {
+                DLOG_TRACE(Capture, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
+            }
+        }
+    } _hookTimer;
 
     if (s_hookDepth > 1) {
         DLOG_ERR(Hook, "[FIRE_TRACE] RE-ENTRANCY DETECTED depth=%d", s_hookDepth);

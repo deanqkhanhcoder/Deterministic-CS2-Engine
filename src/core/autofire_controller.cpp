@@ -69,7 +69,10 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
             input.type = INPUT_MOUSE;
             input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
             input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
+            int64_t preSyscall = timing::NowUs();
             SendInput(1, &input, sizeof(INPUT));
+            int64_t postSyscall = timing::NowUs();
+            DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
             s_state.autoFire.hasDispatchedShot = true;
         }
         
@@ -233,8 +236,16 @@ bool OnLButtonDown() {
                 input.type = INPUT_MOUSE;
                 input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
                 input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
+                
+                int64_t preSyscall = timing::NowUs();
                 SendInput(1, &input, sizeof(INPUT));
+                int64_t postSyscall = timing::NowUs();
+                
+                int64_t totalLatency = postSyscall - s_state.autoFire.stats.m1_down_us;
+                
                 LOG_FIRE_TRACE("SHOT_DISPATCH", currentGen);
+                DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+                DLOG_TRACE(Injection, "[FIRE_TRACE] PHYSICAL_CLICK_TO_SHOT_US latency=%lld", totalLatency);
             }
         };
 
