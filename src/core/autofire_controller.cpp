@@ -154,7 +154,7 @@ bool OnLButtonDown() {
     
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_state.autoFire.stats.m1_down_us = nowMs * 1000LL; // Roughly now
+        s_state.autoFire.stats.m1_down_us = timing::NowUs(); // Exact microsecond timestamp
         s_state.autoFire.stats.batch_flush_begin_us = 0;
         s_state.autoFire.stats.batch_flush_end_us = 0;
         s_state.autoFire.stats.shot_scheduled_us = 0;

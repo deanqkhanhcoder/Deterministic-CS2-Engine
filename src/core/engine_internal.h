@@ -32,7 +32,6 @@ extern State s_state;
 extern std::mutex s_stateMutex;
 extern std::atomic<bool> s_suspendedAtomic;
 extern bool s_hookInstalled;
-extern std::atomic_flag s_flushGuard;
 
 void LogFireTrace(const char* phase, uint64_t gen);
 #ifdef LOG_FIRE_TRACE
@@ -47,23 +46,25 @@ struct alignas(64) InjectionBatch {
     void push(Key k, bool down) { if (count < 16) events[count++] = {k, down}; }
     void flush() {
         if (count == 0) return;
-        while (s_flushGuard.test_and_set(std::memory_order_acquire)) { _mm_pause(); }
+        
         int64_t start_us = timing::NowUs();
         
         s_state.autoFire.stats.batch_flush_begin_us = timing::NowUs();
-        LOG_FIRE_TRACE("BATCH_FLUSH_BEGIN", s_state.autoFire.fireGenerationId);
+        uint64_t genId = s_state.autoFire.fireGenerationId;
+        LOG_FIRE_TRACE("BATCH_FLUSH_BEGIN", genId);
+        
         for (int i = 0; i < count; ++i) {
             if (events[i].down) injection::KeyDown(events[i].k);
             else injection::KeyUp(events[i].k);
         }
+        
         s_state.autoFire.stats.batch_flush_end_us = timing::NowUs();
-        LOG_FIRE_TRACE("BATCH_FLUSH_COMPLETE", s_state.autoFire.fireGenerationId);
+        LOG_FIRE_TRACE("BATCH_FLUSH_COMPLETE", genId);
 
         int64_t end_us = timing::NowUs();
         if ((end_us - start_us) > 1000) {
             DLOG_WARN(Injection, "[FIRE_TRACE] FLUSH_EXECUTION_US duration=%lld", (end_us - start_us));
         }
-        s_flushGuard.clear(std::memory_order_release);
     }
 };
 void PublishEngineState();

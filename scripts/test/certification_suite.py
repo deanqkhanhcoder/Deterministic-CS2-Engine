@@ -40,7 +40,8 @@ def run_stress_test(duration_minutes=30):
         os.remove('marco_debug.log')
         
     print(f"Starting marco_debug.exe for {duration_minutes} MINUTE CERTIFICATION STRESS TEST...")
-    proc = subprocess.Popen(["runtime/bin/marco_debug.exe"])
+    exe_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../runtime/bin/marco_debug.exe")
+    proc = subprocess.Popen([exe_path])
     time.sleep(3) # Wait for startup
     
     start_time = time.time()
@@ -48,33 +49,34 @@ def run_stress_test(duration_minutes=30):
     keys = [0x11, 0x1E, 0x1F, 0x20] # W, A, S, D
     
     print("Stress test running... Do not touch mouse/keyboard.")
-    iteration = 0
-    while time.time() - start_time < duration_secs:
-        iteration += 1
-        k1 = random.choice(keys)
-        k2 = random.choice(keys)
-        
-        # Rapid diagonal, cancel, M1 spam
-        send_key(k1, False)
-        send_key(k2, False)
-        if random.random() > 0.3: send_mouse(True)
-        time.sleep(0.005) # 5ms
-        send_key(k1, True)
-        if random.random() > 0.5: send_mouse(False)
-        time.sleep(0.002)
-        send_key(k2, True)
+    try:
+        iteration = 0
+        while time.time() - start_time < duration_secs:
+            iteration += 1
+            k1 = random.choice(keys)
+            k2 = random.choice(keys)
+            
+            # Rapid diagonal, cancel, M1 spam
+            send_key(k1, False)
+            send_key(k2, False)
+            if random.random() > 0.3: send_mouse(True)
+            time.sleep(0.005) # 5ms
+            send_key(k1, True)
+            if random.random() > 0.5: send_mouse(False)
+            time.sleep(0.002)
+            send_key(k2, True)
+            send_mouse(False)
+            time.sleep(0.010)
+            
+            if iteration % 1000 == 0:
+                elapsed = time.time() - start_time
+                print(f"[{elapsed:.1f}s] Iterations: {iteration}")
+    finally:
+        print("Stress test finished. Shutting down...")
         send_mouse(False)
-        time.sleep(0.010)
-        
-        if iteration % 1000 == 0:
-            elapsed = time.time() - start_time
-            print(f"[{elapsed:.1f}s] Iterations: {iteration}")
-
-    print("Stress test finished. Shutting down...")
-    send_mouse(False)
-    for k in keys: send_key(k, True)
-    proc.terminate()
-    proc.wait()
+        for k in keys: send_key(k, True)
+        proc.terminate()
+        proc.wait()
 
 def analyze_logs():
     print("Analyzing logs...")
@@ -102,7 +104,9 @@ def analyze_logs():
                     m = re.search(r'd_dead=(\d+)', line)
                     if m: stats['d_dead_jitters'].append(int(m.group(1)))
                 elif 'HOOK_CALLBACK_US' in line:
-                    stats['hook_stalls'] += 1
+                    m = re.search(r'duration=(\d+)', line)
+                    if m and int(m.group(1)) > 1000:
+                        stats['hook_stalls'] += 1
                 elif 'FIRESTATE_TRANSITION' in line:
                     old_m = re.search(r'old=(\d+)', line)
                     new_m = re.search(r'new=(\d+)', line)
@@ -137,8 +141,12 @@ def analyze_logs():
     print("="*50)
 
 if __name__ == '__main__':
-    duration = 30
-    if len(sys.argv) > 1:
-        duration = int(sys.argv[1])
-    run_stress_test(duration)
-    analyze_logs()
+    ctypes.windll.winmm.timeBeginPeriod(1)
+    try:
+        duration = 30
+        if len(sys.argv) > 1:
+            duration = int(sys.argv[1])
+        run_stress_test(duration)
+        analyze_logs()
+    finally:
+        ctypes.windll.winmm.timeEndPeriod(1)

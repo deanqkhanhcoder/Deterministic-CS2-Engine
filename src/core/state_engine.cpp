@@ -51,7 +51,6 @@ State s_state;
 std::mutex s_stateMutex;
 std::atomic<bool> s_suspendedAtomic{false};
 bool s_hookInstalled = false;
-std::atomic_flag s_flushGuard = ATOMIC_FLAG_INIT;
 
 void PublishEngineState() {
     EngineStatePublication pub;
