@@ -56,6 +56,7 @@ BrakeResult InjectAutoFireBrake(Key heldKey, InjectionBatch& batch) {
 
 void CancelPendingShotLocked(InjectionBatch& batch) {
     if (s_state.autoFire.state != FireState::Idle) {
+        DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=0 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
         bool needsMouse1 = false;
         if (s_state.autoFire.state == FireState::Stabilizing) {
             timing::CancelTimer(Key::Mouse1);
@@ -196,6 +197,7 @@ bool OnLButtonDown() {
         applyBrake(Axis::Y); applyBrake(Axis::X);
         
         if (needsShot) {
+            DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=1 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
             s_state.autoFire.state = FireState::Stabilizing;
         }
         PublishEngineState();
@@ -220,6 +222,7 @@ bool OnLButtonDown() {
                 if (s_state.autoFire.state == FireState::Stabilizing && 
                     s_state.autoFire.fireGenerationId == currentGen) {
                     
+                    DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=2 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
                     s_state.autoFire.state = FireState::Fired;
                     s_state.autoFire.hasDispatchedShot = true;
                     shouldFire = true;

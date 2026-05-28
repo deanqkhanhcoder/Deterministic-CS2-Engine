@@ -21,6 +21,7 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
             if (s_state.autoFire.state != FireState::Stabilizing || s_state.autoFire.expectedShotId != expectedTimerId) {
                 return; // Stale or cancelled shot
             }
+            DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=1 new=2 gen=%llu", s_state.autoFire.fireGenerationId);
             s_state.autoFire.state = FireState::Fired;
             s_state.autoFire.hasDispatchedShot = true;
             LOG_FIRE_TRACE("SHOT_DISPATCH", s_state.autoFire.fireGenerationId);
@@ -76,6 +77,7 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
                         }
                     }
                     s_state.autoFire.suspendedMovementMask = 0;
+                    DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=3 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
                     s_state.autoFire.state = FireState::Restoring;
                     LOG_FIRE_TRACE("MOVEMENT_RESTORE", s_state.autoFire.fireGenerationId);
                     DLOG_TRACE(Runtime, "AutoFire Brake Finished: Movement Restored");
