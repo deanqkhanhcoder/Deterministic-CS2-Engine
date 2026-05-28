@@ -43,6 +43,75 @@ static bool s_physSpaceDown = false;
 static bool s_spaceSwallowed = false;
 static bool s_wasdSwallowed[4] = {false};
 
+struct PhysicalEvent {
+    bool isMouse; // true for mouse, false for keyboard
+    Key key;
+    bool isDown;
+};
+
+static std::mutex s_eventMutex;
+static std::condition_variable s_eventCv;
+static PhysicalEvent s_eventQueue[256];
+static int s_eventHead = 0;
+static int s_eventTail = 0;
+
+static void PushEvent(const PhysicalEvent& ev) {
+    std::lock_guard<std::mutex> lock(s_eventMutex);
+    int next = (s_eventHead + 1) % 256;
+    if (next != s_eventTail) { // don't overwrite if full
+        s_eventQueue[s_eventHead] = ev;
+        s_eventHead = next;
+        s_eventCv.notify_one();
+    }
+}
+
+static std::thread s_workerThread;
+static std::atomic<bool> s_workerRunning{false};
+
+void WorkerThreadFunc() {
+    topology::PinBackgroundThread(); // Pin to background
+    
+    while (s_workerRunning) {
+        PhysicalEvent ev;
+        {
+            std::unique_lock<std::mutex> lock(s_eventMutex);
+            s_eventCv.wait(lock, []{ return s_eventHead != s_eventTail || !s_workerRunning; });
+            if (!s_workerRunning) break;
+            
+            ev = s_eventQueue[s_eventTail];
+            s_eventTail = (s_eventTail + 1) % 256;
+        }
+        
+        // Delegate to state engine outside the queue lock!
+        if (ev.isMouse) {
+            if (ev.isDown) {
+                if (!engine::IsSuspended() && IsTargetActive()) {
+                    if (target_platform::GetActiveCapabilities() & target_platform::CAP_CSTRAFE) {
+                        engine::OnLButtonDown();
+                    }
+                }
+            } else {
+                if (!engine::IsSuspended() && IsTargetActive()) {
+                    engine::OnLButtonUp();
+                }
+            }
+        } else {
+            bool isActive = IsTargetActive();
+            bool isSuspended = engine::IsSuspended();
+            bool shouldRoute = isActive && !isSuspended;
+            uint32_t caps = target_platform::GetActiveCapabilities();
+            bool supportStrafe = (caps & target_platform::CAP_CSTRAFE);
+            bool routeThis = shouldRoute && supportStrafe;
+            
+            if (ev.isDown) {
+                engine::HandleKeyDown(ev.key, routeThis);
+            } else {
+                engine::HandleKeyUp(ev.key, routeThis);
+            }
+        }
+    }
+}
+
 static bool s_hkDownF1 = false;
 static bool s_hkDownF2 = false;
 static bool s_hkDownF3 = false;
@@ -164,17 +233,6 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         ~HookDepthGuard() { s_hookDepth--; }
     } guard;
 
-    struct HookTimer {
-        int64_t start;
-        HookTimer() : start(timing::NowUs()) {}
-        ~HookTimer() {
-            int64_t end = timing::NowUs();
-            if (end - start > 1000) {
-                DLOG_TRACE(Runtime, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
-            }
-        }
-    } _hookTimer;
-
     if (s_hookDepth > 1) {
         DLOG_ERR(Hook, "[FIRE_TRACE] RE-ENTRANCY DETECTED depth=%d", s_hookDepth);
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
@@ -290,30 +348,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (keyIdx >= 0) {
         assert(keyIdx < 4);
         Key k = static_cast<Key>(keyIdx);
-        bool supportStrafe = (caps & target_platform::CAP_CSTRAFE);
-        bool routeThis = shouldRoute && supportStrafe;
-        
-        if (isDown) {
-            DLOG_TRACE(Hook, "Key DOWN: %s (route=%d)", reinterpret_cast<int64_t>(keymap::KeyName[keyIdx]), routeThis);
-            // Check true hardware physical state BEFORE the engine updates it
-            bool isEdge = !engine::GetState().phys[ki(k)];
-            
-            engine::HandleKeyDown(k, routeThis);
-            
-            if (isEdge) {
-                // ONLY adopt swallow ownership on the true physical edge
-                s_wasdSwallowed[keyIdx] = routeThis;
-            }
-            
-            // Always swallow the event (including auto-repeats) to prevent game spam
-            if (routeThis) return 1;
-        } else {
-            DLOG_TRACE(Hook, "Key UP: %s (route=%d)", reinterpret_cast<int64_t>(keymap::KeyName[keyIdx]), routeThis);
-            engine::HandleKeyUp(k, routeThis);
-            bool wasSwallowed = s_wasdSwallowed[keyIdx];
-            s_wasdSwallowed[keyIdx] = false; 
-            if (wasSwallowed) return 1; 
-        }
+        PushEvent({false, k, isDown});
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     // Modifiers
@@ -364,17 +399,6 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         HookDepthGuard() { s_hookDepth++; }
         ~HookDepthGuard() { s_hookDepth--; }
     } guard;
-
-    struct HookTimer {
-        int64_t start;
-        HookTimer() : start(timing::NowUs()) {}
-        ~HookTimer() {
-            int64_t end = timing::NowUs();
-            if (end - start > 1000) {
-                DLOG_TRACE(Runtime, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
-            }
-        }
-    } _hookTimer;
 
     if (s_hookDepth > 1) {
         DLOG_ERR(Hook, "[FIRE_TRACE] RE-ENTRANCY DETECTED depth=%d", s_hookDepth);
@@ -427,17 +451,9 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
     // [FIX Bug #1] Mouse layer must also follow focus/suspend but never desync
     if (wParam == WM_LBUTTONDOWN) {
-        if (!engine::IsSuspended() && IsTargetActive()) {
-            if (target_platform::GetActiveCapabilities() & target_platform::CAP_CSTRAFE) {
-                if (engine::OnLButtonDown()) {
-                    return 1; // Swallow the mouse click for delayed firing
-                }
-            }
-        }
+        PushEvent({true, Key::Mouse1, true});
     } else if (wParam == WM_LBUTTONUP) {
-        if (!engine::IsSuspended() && IsTargetActive()) {
-            engine::OnLButtonUp();
-        }
+        PushEvent({true, Key::Mouse1, false});
     }
 
     return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
@@ -516,6 +532,9 @@ bool Install(HWND hwnd) {
     PollTarget();
 
     s_hookThreadRunning = true;
+    s_workerRunning = true;
+    s_workerThread = std::thread(WorkerThreadFunc);
+    
     std::unique_lock<std::mutex> lock(s_hookMutex);
     s_hookThread = std::thread(HookThreadFunc);
     s_hookCv.wait(lock); // Wait for thread to attempt install
@@ -540,6 +559,14 @@ void Uninstall() {
             s_hookThread.join();
         }
         s_hookThreadId = 0;
+    }
+    
+    if (s_workerRunning) {
+        s_workerRunning = false;
+        s_eventCv.notify_all();
+        if (s_workerThread.joinable()) {
+            s_workerThread.join();
+        }
     }
     
     if (s_focusRunning.load()) {
