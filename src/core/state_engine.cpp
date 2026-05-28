@@ -51,6 +51,7 @@ State s_state;
 std::mutex s_stateMutex;
 std::atomic<bool> s_suspendedAtomic{false};
 bool s_hookInstalled = false;
+std::atomic_flag s_flushGuard = ATOMIC_FLAG_INIT;
 
 void PublishEngineState() {
     EngineStatePublication pub;
@@ -540,15 +541,17 @@ void SetHookInstalled(bool v) { s_hookInstalled = v; NotifyUI(); }
 
 void LogFireTrace(const char* phase, uint64_t gen) {
 #if MARCO_DEBUG_FORENSIC
+    int64_t nowUs = timing::NowUs();
+    auto& stats = s_state.autoFire.stats;
+    int64_t delta_m1 = (stats.m1_down_us > 0) ? (nowUs - stats.m1_down_us) : 0;
+    int64_t delta_flush = (stats.batch_flush_end_us > 0) ? (nowUs - stats.batch_flush_end_us) : 0;
+    int64_t delta_schedule = (stats.shot_scheduled_us > 0) ? (nowUs - stats.shot_scheduled_us) : 0;
+    int64_t delta_deadline = (stats.expected_deadline_us > 0) ? (nowUs - stats.expected_deadline_us) : 0;
+
     char buf[256];
-    snprintf(buf, sizeof(buf), "[FIRE_TRACE] t=%lldus tid=%lu gen=%llu phase=%s vx=%d vy=%d logical=W%d A%d S%d D%d",
-        timing::NowUs(), GetCurrentThreadId(), gen, phase,
-        s_state.axisState[1] == AxisState::Positive ? 1 : (s_state.axisState[1] == AxisState::Negative ? -1 : 0),
-        s_state.axisState[0] == AxisState::Positive ? 1 : (s_state.axisState[0] == AxisState::Negative ? -1 : 0),
-        s_state.logical[ki(Key::W)] ? 1 : 0,
-        s_state.logical[ki(Key::A)] ? 1 : 0,
-        s_state.logical[ki(Key::S)] ? 1 : 0,
-        s_state.logical[ki(Key::D)] ? 1 : 0);
+    snprintf(buf, sizeof(buf), "[FIRE_TRACE] t=%lldus tid=%lu gen=%llu phase=%s d_m1=%lld d_flush=%lld d_sched=%lld d_dead=%lld",
+        nowUs, GetCurrentThreadId(), gen, phase,
+        delta_m1, delta_flush, delta_schedule, delta_deadline);
     dlog::Write(dlog::Subsystem::FireTrace, dlog::Level::Trace, __FILE__, __LINE__, "%s", (int64_t)buf);
 #endif
 }

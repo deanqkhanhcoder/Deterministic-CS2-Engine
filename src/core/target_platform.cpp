@@ -280,8 +280,7 @@ DWORD GetCurrentTargetPid() {
 }
 
 uint32_t GetActiveCapabilities() {
-const TargetProfile* prof = GetActivePublication().profile;
-    return prof ? prof->capabilities : CAP_NONE;
+    return CAP_CSTRAFE | CAP_BHOP;
 }
 
 void GetActiveTargetName(wchar_t* outBuf, size_t maxLen) {

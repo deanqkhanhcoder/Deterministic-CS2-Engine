@@ -14,18 +14,19 @@
 
 namespace engine {
 
-int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch, std::function<void()>& outShotCallback) {
+
+BrakeResult InjectAutoFireBrake(Key heldKey, InjectionBatch& batch) {
     int ki_h = ki(heldKey);
     Key counterKey = keymap::Opposite[ki_h];
     int ki_c = ki(counterKey);
     Axis ax = keymap::KeyAxis[ki_h];
     
-    if (s_state.phys[ki_c]) return 0;
-    if (s_state.axisState[ai(ax)] == AxisState::Conflict) return 0;
+    if (s_state.phys[ki_c]) return {0, 0};
+    if (s_state.axisState[ai(ax)] == AxisState::Conflict) return {0, 0};
     
     const RuntimeConfig& rc = rcfg::Get();
     int64_t heldUs = timing::NowUs() - s_state.downTimeUs[ki_h];
-    if (heldUs < rc.minTapUs) return 0;
+    if (heldUs < rc.minTapUs) return {0, 0};
     
     int64_t effectiveBrakeUs = CalculateTrueBrakeUs(heldKey, ax, heldUs);
     
@@ -50,23 +51,7 @@ int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch, std::function<vo
     }
     int64_t preFireUs = needsStabilization ? rcfg::Get().tapDelayMs * 1000LL : 0;
     
-    outShotCallback = []() {
-        INPUT input = {};
-        input.type = INPUT_MOUSE;
-        input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
-        SendInput(1, &input, sizeof(INPUT));
-        {
-            std::lock_guard<std::mutex> lock(s_stateMutex);
-            s_state.autoFire.hasDispatchedShot = true;
-        }
-    };
-    
-    if (preFireUs == 0) {
-        return 0;
-    }
-    
-    return preFireUs;
+    return {effectiveBrakeUs, preFireUs};
 }
 
 void CancelPendingShotLocked(InjectionBatch& batch) {
@@ -92,6 +77,7 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
             if (s_state.autoFire.injectedCounterMask & (1 << i)) {
                 batch.push((Key)i, false);
                 s_state.logical[i] = false;
+                timing::CancelTimer((Key)i);
             }
         }
         
@@ -159,10 +145,17 @@ bool OnLButtonDown() {
     InjectionBatch batch;
     
     int64_t maxBrakeUs = 0;
-    std::function<void()> shotCallback;
+    int64_t maxPreFireUs = 0;
+    bool needsShot = false;
     
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
+        s_state.autoFire.stats.m1_down_us = nowMs * 1000LL; // Roughly now
+        s_state.autoFire.stats.batch_flush_begin_us = 0;
+        s_state.autoFire.stats.batch_flush_end_us = 0;
+        s_state.autoFire.stats.shot_scheduled_us = 0;
+        s_state.autoFire.stats.expected_deadline_us = 0;
+        s_state.autoFire.stats.timer_wake_actual_us = 0;
         
         // If already waiting for a shot, cancel the old one and re-evaluate
         if (s_state.autoFire.state != FireState::Idle) {
@@ -181,26 +174,28 @@ bool OnLButtonDown() {
         // Start a new fire generation for tracking
         s_state.autoFire.fireGenerationId++;
         s_state.autoFire.hasDispatchedShot = false;
+        LOG_FIRE_TRACE("M1_PHYSICAL_DOWN", s_state.autoFire.fireGenerationId);
 
         auto applyBrake = [&](Axis ax) {
             for (int i = 0; i < 2; ++i) {
                 Key key = (ax == Axis::Y) ? (i == 0 ? Key::W : Key::S) : (i == 0 ? Key::A : Key::D);
                 int ki_k = ki(key);
                 if (s_state.phys[ki_k] && s_state.axisState[ai(ax)] != AxisState::Conflict) {
-                    std::function<void()> cb;
-                    int64_t brakeUs = InjectAutoFireBrake(key, batch, cb);
-                    if (cb) shotCallback = cb;
-                    if (brakeUs > 0) {
+                    BrakeResult res = InjectAutoFireBrake(key, batch);
+                    if (res.effectiveBrakeUs > 0) {
+                        needsShot = true;
+                        if (res.effectiveBrakeUs > maxBrakeUs) maxBrakeUs = res.effectiveBrakeUs;
+                        if (res.preFireUs > maxPreFireUs) maxPreFireUs = res.preFireUs;
+                        
                         Key counterKey = (ax == Axis::Y) ? (i == 0 ? Key::S : Key::W) : (i == 0 ? Key::D : Key::A);
-                        s_state.expectedTimerId[ki(counterKey)] = timing::ScheduleTimerUs(counterKey, brakeUs);
+                        s_state.expectedTimerId[ki(counterKey)] = timing::ScheduleTimerUs(counterKey, res.effectiveBrakeUs);
                     }
-                    if (brakeUs > maxBrakeUs) maxBrakeUs = brakeUs;
                 }
             }
         };
         applyBrake(Axis::Y); applyBrake(Axis::X);
         
-        if (maxBrakeUs > 0 || shotCallback) {
+        if (needsShot) {
             s_state.autoFire.state = FireState::Stabilizing;
         }
         PublishEngineState();
@@ -209,23 +204,63 @@ bool OnLButtonDown() {
     _doNotify = true;
     
     // AFTER the flush
-    if (shotCallback) {
+    if (needsShot) {
         int64_t flushDoneUs = timing::NowUs();
-        if (maxBrakeUs > 0) {
-            int64_t preFireUs = 15625 + (int64_t)(rcfg::Get().subtickPaddingTicks * 15625.0);
-            if (maxBrakeUs < preFireUs) preFireUs = maxBrakeUs; // don't delay longer than brake
-            int64_t shotDeadlineUs = flushDoneUs + preFireUs;
+        
+        uint64_t currentGen = 0;
+        {
             std::lock_guard<std::mutex> reLock(s_stateMutex);
-            s_state.autoFire.expectedShotId = timing::ScheduleTimerAtUs(Key::Mouse1, shotDeadlineUs, shotCallback);
-            LOG_FIRE_TRACE("SHOT_TIMER_ARMED", s_state.autoFire.fireGenerationId);
+            currentGen = s_state.autoFire.fireGenerationId;
+        }
+
+        auto shotCallback = [currentGen]() {
+            bool shouldFire = false;
+            {
+                std::lock_guard<std::mutex> lock(s_stateMutex);
+                if (s_state.autoFire.state == FireState::Stabilizing && 
+                    s_state.autoFire.fireGenerationId == currentGen) {
+                    
+                    s_state.autoFire.state = FireState::Fired;
+                    s_state.autoFire.hasDispatchedShot = true;
+                    shouldFire = true;
+                }
+            }
+            if (shouldFire) {
+                INPUT input = {};
+                input.type = INPUT_MOUSE;
+                input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+                input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
+                SendInput(1, &input, sizeof(INPUT));
+                LOG_FIRE_TRACE("SHOT_DISPATCH", currentGen);
+            }
+        };
+
+        if (maxPreFireUs > 0) {
+            int64_t computedPreFireUs = 15625 + (int64_t)(rcfg::Get().subtickPaddingTicks * 15625.0);
+            if (maxPreFireUs < computedPreFireUs) computedPreFireUs = maxPreFireUs; 
+            int64_t shotDeadlineUs = flushDoneUs + computedPreFireUs;
+            if (shotDeadlineUs < timing::NowUs()) {
+                shotDeadlineUs = timing::NowUs();
+            }
+            
+            std::lock_guard<std::mutex> reLock(s_stateMutex);
+            if (s_state.autoFire.fireGenerationId == currentGen && s_state.autoFire.state == FireState::Stabilizing) {
+                s_state.autoFire.stats.expected_deadline_us = shotDeadlineUs;
+                s_state.autoFire.stats.shot_scheduled_us = timing::NowUs();
+                s_state.autoFire.expectedShotId = timing::ScheduleTimerAtUs(Key::Mouse1, shotDeadlineUs, shotCallback);
+                LOG_FIRE_TRACE("SHOT_TIMER_ARMED", currentGen);
+            }
         } else {
             // Immediate shot (competitive safety)
-            LOG_FIRE_TRACE("SHOT_TIMER_ARMED", s_state.autoFire.fireGenerationId);
+            std::lock_guard<std::mutex> reLock(s_stateMutex);
+            s_state.autoFire.stats.expected_deadline_us = timing::NowUs();
+            s_state.autoFire.stats.shot_scheduled_us = timing::NowUs();
+            LOG_FIRE_TRACE("SHOT_TIMER_IMMEDIATE", currentGen);
             shotCallback(); 
         }
     }
     
-    return (maxBrakeUs > 0);
+    return needsShot;
 }
 
 } // namespace engine

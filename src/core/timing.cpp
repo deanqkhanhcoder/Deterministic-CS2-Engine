@@ -11,6 +11,8 @@
 #include <windows.h>
 #include "build_config.h"
 #include "telemetry.h"
+#include "target_platform.h"
+#include "engine_internal.h"
 #include "topology.h"
 #include "topology.h"
 #include "analysis_toolkit.h"
@@ -305,11 +307,17 @@ static void TimerThreadFunc() {
 
             // Post completion to main thread
             DLOG_INFO(Timing, "TimerThreadFunc: Posting WM_TIMER_EXPIRED for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
+            // Direct Dispatch: Call engine::OnTimerExpired directly on the timer thread!
+            // This eliminates 0.5 - 3.3ms of Windows Message Queue jitter (d_dead)
+            if (slot.key == Key::Mouse1) {
+                std::lock_guard<std::mutex> stLock(engine::s_stateMutex);
+                engine::s_state.autoFire.stats.timer_wake_actual_us = actualWakeUs;
+                LOG_FIRE_TRACE("TIMER_WAKE_ACTUAL", engine::s_state.autoFire.fireGenerationId);
+            }
             if (slot.cb) {
                 slot.cb();
             } else {
-                PostMessage(s_targetHwnd, WM_TIMER_EXPIRED,
-                            (WPARAM)slot.key, (LPARAM)slot.id);
+                engine::OnTimerExpired(slot.key, slot.id);
             }
 
         } else {
@@ -395,6 +403,7 @@ uint64_t ScheduleTimer(Key key, int durationMs) {
 void CancelTimer(Key key) {
     std::unique_lock<std::mutex> lock(s_spinlock);
     s_slots[ki(key)].active = false;
+    s_slots[ki(key)].cb = nullptr;
     uint8_t mask = s_activeMask.load(std::memory_order_relaxed);
     mask &= ~(1 << ki(key));
     s_activeMask.store(mask, std::memory_order_relaxed);

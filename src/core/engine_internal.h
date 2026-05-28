@@ -3,9 +3,11 @@
 #include "state_engine.h"
 #include "injection.h"
 #include "runtime_config.h"
+#include "timing.h"
 #include <mutex>
 #include <atomic>
 #include <functional>
+#include "debug_logger.h"
 
 namespace cfg_rt {
     inline int    TAP_SPAM_HALF_LIFE_MS() { return rcfg::Get().tapSpamHalfLifeMs; }
@@ -30,8 +32,12 @@ extern State s_state;
 extern std::mutex s_stateMutex;
 extern std::atomic<bool> s_suspendedAtomic;
 extern bool s_hookInstalled;
+extern std::atomic_flag s_flushGuard;
 
 void LogFireTrace(const char* phase, uint64_t gen);
+#ifdef LOG_FIRE_TRACE
+#undef LOG_FIRE_TRACE
+#endif
 #define LOG_FIRE_TRACE(phase, gen) engine::LogFireTrace(phase, gen)
 
 struct alignas(64) InjectionBatch {
@@ -41,12 +47,23 @@ struct alignas(64) InjectionBatch {
     void push(Key k, bool down) { if (count < 16) events[count++] = {k, down}; }
     void flush() {
         if (count == 0) return;
+        while (s_flushGuard.test_and_set(std::memory_order_acquire)) { _mm_pause(); }
+        int64_t start_us = timing::NowUs();
+        
+        s_state.autoFire.stats.batch_flush_begin_us = timing::NowUs();
         LOG_FIRE_TRACE("BATCH_FLUSH_BEGIN", s_state.autoFire.fireGenerationId);
         for (int i = 0; i < count; ++i) {
             if (events[i].down) injection::KeyDown(events[i].k);
             else injection::KeyUp(events[i].k);
         }
+        s_state.autoFire.stats.batch_flush_end_us = timing::NowUs();
         LOG_FIRE_TRACE("BATCH_FLUSH_COMPLETE", s_state.autoFire.fireGenerationId);
+
+        int64_t end_us = timing::NowUs();
+        if ((end_us - start_us) > 1000) {
+            DLOG_WARN(Injection, "[FIRE_TRACE] FLUSH_EXECUTION_US duration=%lld", (end_us - start_us));
+        }
+        s_flushGuard.clear(std::memory_order_release);
     }
 };
 void PublishEngineState();
@@ -63,7 +80,8 @@ void ReconcileInternal(bool suspending, InjectionBatch& batch);
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs);
 
 // Returns the stabilization duration (preFireUs), or 0 if immediate shot/no shot
-int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch, std::function<void()>& outShotCallback);
+struct BrakeResult { int64_t effectiveBrakeUs; int64_t preFireUs; };
+BrakeResult InjectAutoFireBrake(Key heldKey, InjectionBatch& batch);
 void CancelPendingShotLocked(InjectionBatch& batch);
 
 } // namespace engine

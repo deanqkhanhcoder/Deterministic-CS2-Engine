@@ -83,7 +83,7 @@ HWND fg = s_activeHwnd.load(std::memory_order_acquire);
     static HWND s_lastEvaluatedFg = nullptr;
 
     auto pub = target_platform::GetCurrentIdentity();
-    bool isActive = (fg == pub.hwnd && pub.hwnd != nullptr);
+    bool isActive = true; // (fg == pub.hwnd && pub.hwnd != nullptr);
 
     if (fg != s_lastEvaluatedFg) {
         s_lastEvaluatedFg = fg;

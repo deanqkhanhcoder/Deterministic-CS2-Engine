@@ -78,13 +78,8 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
 #endif
     switch (msg) {
-        case WM_TIMER_EXPIRED: {
-            Key k = static_cast<Key>((int)wParam);
-            uint64_t id = static_cast<uint64_t>(lParam);
-            engine::OnTimerExpired(k, id);
-            return 0;
-        }
-
+        // WM_TIMER_EXPIRED handler removed. Dispatch is now handled directly by TimerThreadFunc.
+        
         case WM_TOGGLE_SUSPEND: {
             engine::ToggleSuspend();
             if (engine::IsSuspended()) bhop::OnSpaceUp();

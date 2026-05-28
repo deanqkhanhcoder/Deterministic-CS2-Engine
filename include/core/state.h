@@ -66,13 +66,23 @@ struct alignas(64) State {
     // ── Script suspended state ──
     bool suspended = false;
 
-    struct {
+    struct FireTraceStats {
+        int64_t m1_down_us = 0;
+        int64_t batch_flush_begin_us = 0;
+        int64_t batch_flush_end_us = 0;
+        int64_t shot_scheduled_us = 0;
+        int64_t expected_deadline_us = 0;
+        int64_t timer_wake_actual_us = 0;
+    };
+    
+    struct AutoFireState {
         FireState state = FireState::Idle;
-        uint8_t suspendedMovementMask = 0;
-        uint8_t injectedCounterMask = 0;
         uint64_t expectedShotId = 0;
         uint64_t fireGenerationId = 0;
+        uint8_t suspendedMovementMask = 0;
+        uint8_t injectedCounterMask = 0;
         bool hasDispatchedShot = false;
+        FireTraceStats stats;
     } autoFire;
 
     // ── Click history (circular buffer) ──
