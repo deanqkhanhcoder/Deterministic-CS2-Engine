@@ -27,8 +27,8 @@ extern std::atomic<uint32_t> dbgRenderCount;
 void Init(HWND hwnd);
 
 // ── Key event handlers (called from hook) ──
-void HandleKeyDown(Key k, bool routeSemantic);
-void HandleKeyUp(Key k, bool routeSemantic);
+void HandleKeyDown(Key k, bool routeSemantic, int64_t enqueueUs);
+void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs);
 
 // ── System key updates ──
 void OnSysKeyChange(bool isLCtrl, bool down, bool routeSemantic);

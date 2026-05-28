@@ -34,6 +34,7 @@ void ResolveAxis(Axis ax, InjectionBatch& batch) {
 
     s_state.axisState[ai_a] = newState;
     s_state.generation[ai_a]++;
+    LOG_FIRE_TRACE("AXIS_TRANSITION_RESOLVE", s_state.autoFire.fireGenerationId);
 
     if (newState == AxisState::Conflict) {
         NeutralizeAxis(ax, batch);
@@ -83,6 +84,7 @@ void NeutralizeAxis(Axis ax, InjectionBatch& batch) {
     int ai_a = ai(ax);
     Key keys[2] = { keymap::AxisNegKey[ai_a], keymap::AxisPosKey[ai_a] };
     s_state.conflictEnteredTimeMs[ai_a] = timing::NowMs();
+    LOG_FIRE_TRACE("AXIS_TRANSITION_NEUTRALIZE", s_state.autoFire.fireGenerationId);
     s_state.mem.conflictPenalty[ai_a] = std::min(1.0, s_state.mem.conflictPenalty[ai_a] + cfg_rt::CONFLICT_INCREMENT());
 
     for (Key k : keys) {
@@ -139,7 +141,7 @@ struct NoiseGenerator {
 
 static thread_local NoiseGenerator s_noise;
 
-void ApplyOverlapCounterStrafe(Key releaseKey, Key counterKey, int64_t overlapUs, int64_t brakeUs, InjectionBatch& batch) {
+void ApplyOverlapCounterStrafe(Key releaseKey, Key counterKey, int64_t overlapUs, int64_t brakeUs, InjectionBatch& batch, int64_t enqueueUs) {
     (void)brakeUs;
     int ki_r = ki(releaseKey);
     int ki_c = ki(counterKey);
@@ -156,7 +158,7 @@ void ApplyOverlapCounterStrafe(Key releaseKey, Key counterKey, int64_t overlapUs
             s_state.logical[ki_r] = false;
         }
     } else {
-        s_state.expectedTimerId[ki_r] = timing::ScheduleTimerUs(releaseKey, overlapUs);
+        s_state.expectedTimerId[ki_r] = timing::ScheduleTimerAtUs(releaseKey, enqueueUs + overlapUs);
     }
 }
 
@@ -275,7 +277,7 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     return effectiveBrakeUs;
 }
 
-bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch) {
+bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch, int64_t enqueueUs) {
     int ki_c = ki(counterKey);
     if (s_state.phys[ki_c]) {
         DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: %s phys held", reinterpret_cast<int64_t>(keymap::KeyName[ki_c]));
@@ -309,9 +311,9 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
         effectiveBrakeUs = effectiveOverlapUs + MIN_BRAKE_PHASE_US;
     }
 
-    ApplyOverlapCounterStrafe(relKey, counterKey, effectiveOverlapUs, effectiveBrakeUs, batch);
+    ApplyOverlapCounterStrafe(relKey, counterKey, effectiveOverlapUs, effectiveBrakeUs, batch, enqueueUs);
     
-    s_state.expectedTimerId[ki(counterKey)] = timing::ScheduleTimerUs(counterKey, effectiveBrakeUs);
+    s_state.expectedTimerId[ki(counterKey)] = timing::ScheduleTimerAtUs(counterKey, enqueueUs + effectiveBrakeUs);
     
     s_state.mem.conflictPenalty[ai(ax)] = std::max(0.0, s_state.mem.conflictPenalty[ai(ax)] - rc.conflictDecrement);
     return true;

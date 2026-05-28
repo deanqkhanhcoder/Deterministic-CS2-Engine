@@ -61,6 +61,19 @@ void PublishEngineState() {
         pub.phys[i] = s_state.phys[i];
         pub.logical[i] = s_state.logical[i];
         pub.bundleActive = false;
+        
+        // Phase 3: Physical / Logical Consistency Audit
+        if (s_state.phys[i] && !s_state.logical[i]) {
+            // A key is physically held down, but logically released.
+            // This is ONLY legal if it's currently suspended (yielding to a counter-strafe)
+            // or globally suspended.
+            bool isCounterStrafing = (s_state.autoFire.injectedCounterMask & (1 << i));
+            bool isSuspendedMovement = (s_state.autoFire.suspendedMovementMask & (1 << i));
+            
+            if (!s_state.suspended && !isCounterStrafing && !isSuspendedMovement) {
+                DLOG_ERR(Runtime, "ILLEGAL_STATE_TRANSITION key=%d phys=1 logical=0", i);
+            }
+        }
     }
     pub.lastCounterMs = s_state.lastCounterMs;
 
@@ -556,3 +569,37 @@ void LogFireTrace(const char* phase, uint64_t gen) {
 }
 
 } // namespace engine
+
+namespace engine {
+void ValidateAxisState() {
+    // 1. Logical Array consistency
+    bool w = s_state.logical[ki(Key::W)];
+    bool s = s_state.logical[ki(Key::S)];
+    bool a = s_state.logical[ki(Key::A)];
+    bool d = s_state.logical[ki(Key::D)];
+    
+    auto checkAxis = [&](bool pos, bool neg, AxisState state, const char* axName) {
+        if (pos && neg && state != AxisState::Conflict) {
+            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical pos+neg but state is %d", axName, (int)state);
+        }
+        if (pos && !neg && state != AxisState::Positive) {
+            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical pos only but state is %d", axName, (int)state);
+        }
+        if (!pos && neg && state != AxisState::Negative) {
+            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical neg only but state is %d", axName, (int)state);
+        }
+        if (!pos && !neg && state != AxisState::None) {
+            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical none but state is %d", axName, (int)state);
+        }
+    };
+    checkAxis(w, s, s_state.axisState[1], "Y");
+    checkAxis(d, a, s_state.axisState[0], "X");
+
+    // 2. autoFire mask consistency
+    if (s_state.autoFire.state == FireState::Idle) {
+        if (s_state.autoFire.injectedCounterMask != 0) {
+            DLOG_ERR(Runtime, "CORRUPTION: injectedCounterMask != 0 while Idle");
+        }
+    }
+}
+}

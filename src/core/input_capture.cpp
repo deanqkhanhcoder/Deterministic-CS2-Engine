@@ -14,6 +14,8 @@
 #include "target_platform.h"
 #include "telemetry.h"
 #include "topology.h"
+#include "ui_main.h"
+#include "config_io.h"
 #include <cassert>
 #include <atomic>
 #include <thread>
@@ -45,7 +47,8 @@ static bool s_wasdSwallowed[4] = {false};
 
 struct PhysicalEvent {
     bool isMouse; // true for mouse, false for keyboard
-    Key key;
+    WORD vkCode;
+    WORD scanCode;
     bool isDown;
     int64_t timestamp_enqueue_us;
     uint64_t generation_id;
@@ -77,6 +80,14 @@ static std::thread s_workerThread;
 static std::atomic<bool> s_workerRunning{false};
 
 static bool IsTargetActive();
+
+static bool s_hkDownF1 = false;
+static bool s_hkDownF2 = false;
+static bool s_hkDownF3 = false;
+static bool s_hkDownF6 = false;
+static bool s_hkDownF8 = false;
+
+static int ScanToKeyIndex(DWORD scanCode);
 
 void WorkerThreadFunc() {
     topology::PinBackgroundThread(); // Pin to background
@@ -122,20 +133,113 @@ void WorkerThreadFunc() {
             bool supportStrafe = (caps & target_platform::CAP_CSTRAFE);
             bool routeThis = shouldRoute && supportStrafe;
             
-            if (ev.isDown) {
-                engine::HandleKeyDown(ev.key, routeThis);
-            } else {
-                engine::HandleKeyUp(ev.key, routeThis);
+            // --- 1. GLOBAL HOTKEYS ---
+            if (ev.vkCode == VK_F1) {
+                if (!isActive) { DLOG_TRACE(Hook, "ENGINE_BYPASS F1"); continue; }
+                if (ev.isDown && !s_hkDownF1) {
+                    s_hkDownF1 = true;
+                    bhop::ToggleEnabled();
+                    ui::OnStateChanged();
+                }
+                else if (!ev.isDown) s_hkDownF1 = false;
+                continue;
+            }
+            if (ev.vkCode == VK_F2) {
+                if (!isActive) { DLOG_TRACE(Hook, "ENGINE_BYPASS F2"); continue; }
+                if (ev.isDown && !s_hkDownF2) {
+                    s_hkDownF2 = true;
+                    bhop::CycleMode();
+                    ui::OnStateChanged();
+                }
+                else if (!ev.isDown) s_hkDownF2 = false;
+                continue;
+            }
+            if (ev.vkCode == VK_F3) {
+                if (!isActive) { DLOG_TRACE(Hook, "ENGINE_BYPASS F3"); continue; }
+                if (ev.isDown && !s_hkDownF3) {
+                    s_hkDownF3 = true;
+                    RuntimeConfig& cfg = rcfg::GetMutable();
+                    cfg.activeBrakeProfileIndex = (cfg.activeBrakeProfileIndex % 4) + 1;
+                    rcfg::Apply(cfg);
+                    config_io::Save(cfg);
+                    ui::OnStateChanged();
+                }
+                else if (!ev.isDown) s_hkDownF3 = false;
+                continue;
+            }
+            if (ev.vkCode == VK_F6) {
+                if (ev.isDown && !s_hkDownF6) {
+                    s_hkDownF6 = true;
+                    engine::ToggleSuspend();
+                    bhop::OnSuspendChanged();
+                    ui::OnStateChanged();
+                }
+                else if (!ev.isDown) s_hkDownF6 = false;
+                continue;
+            }
+            if (ev.vkCode == VK_F8) {
+                if (ev.isDown && !s_hkDownF8) {
+                    s_hkDownF8 = true;
+                    if (s_hwnd) {
+                        PostMessageW(s_hwnd, WM_CLOSE, 0, 0);
+                    }
+                }
+                else if (!ev.isDown) s_hkDownF8 = false;
+                continue;
+            }
+            
+            // --- 2. WASD ROUTING ---
+            int keyIdx = ScanToKeyIndex(ev.scanCode);
+            if (keyIdx >= 0) {
+                if (!isActive) { DLOG_TRACE(Hook, "ENGINE_BYPASS WASD"); continue; }
+                Key k = static_cast<Key>(keyIdx);
+                if (ev.isDown) {
+                    engine::HandleKeyDown(k, routeThis, ev.timestamp_enqueue_us);
+                } else {
+                    engine::HandleKeyUp(k, routeThis, ev.timestamp_enqueue_us);
+                }
+                continue;
+            }
+            
+            // --- 3. MODIFIER ROUTING ---
+            if (!isActive) {
+                if (ev.vkCode == VK_LCONTROL || ev.scanCode == 0x2E || ev.vkCode == VK_LSHIFT || ev.vkCode == VK_SPACE) {
+                    DLOG_TRACE(Hook, "ENGINE_BYPASS MODIFIER/SPACE");
+                    continue;
+                }
+            }
+            if (ev.vkCode == VK_LCONTROL) {
+                engine::OnSysKeyChange(true, ev.isDown, shouldRoute && supportStrafe);
+                continue;
+            }
+            if (ev.scanCode == 0x2E) { // 'C' key scan code
+                engine::OnSysKeyChange(false, ev.isDown, shouldRoute && supportStrafe);
+                continue;
+            }
+            if (ev.vkCode == VK_LSHIFT) {
+                engine::OnShiftChange(ev.isDown, shouldRoute && supportStrafe);
+                continue;
+            }
+            
+            // --- 4. SPACE ROUTING ---
+            if (ev.vkCode == VK_SPACE) {
+                if (ev.isDown) {
+                    engine::OnSpaceDown(shouldRoute);
+                    bool shouldRouteBhop = isActive;
+                    if (shouldRouteBhop && rcfg::Get().bhopEnabled && (caps & target_platform::CAP_BHOP)) {
+                        bhop::OnSpaceDown();
+                    }
+                } else {
+                    engine::OnSpaceUp();
+                    bhop::OnSpaceUp();
+                }
+                continue;
             }
         }
     }
 }
 
-static bool s_hkDownF1 = false;
-static bool s_hkDownF2 = false;
-static bool s_hkDownF3 = false;
-static bool s_hkDownF6 = false;
-static bool s_hkDownF8 = false;
+
 
 void PollTarget() {
     HWND fg = s_activeHwnd.load(std::memory_order_acquire);
@@ -175,7 +279,9 @@ HWND fg = s_activeHwnd.load(std::memory_order_acquire);
     static HWND s_lastEvaluatedFg = nullptr;
 
     auto pub = target_platform::GetCurrentIdentity();
-    bool isActive = true; // (fg == pub.hwnd && pub.hwnd != nullptr);
+    bool isActive = (fg == pub.hwnd && pub.hwnd != nullptr && pub.IsValid());
+    if (isActive) DLOG_TRACE(Hook, "WINDOW_ACCEPT");
+    else DLOG_TRACE(Hook, "WINDOW_REJECT");
 
     if (fg != s_lastEvaluatedFg) {
         s_lastEvaluatedFg = fg;
@@ -321,93 +427,37 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     }
 
     // --- 1. GLOBAL HOTKEYS (Before Focus Filter) ---
-    if (vk == VK_F1) {
-        if (isDown && !s_hkDownF1) { s_hkDownF1 = true; SendNotifyMessageW(s_hwnd, WM_BHOP_TOGGLE, 0, 0); }
-        else if (isUp) s_hkDownF1 = false;
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
-    if (vk == VK_F2) {
-        if (isDown && !s_hkDownF2) { s_hkDownF2 = true; SendNotifyMessageW(s_hwnd, WM_BHOP_CYCLE_MODE, 0, 0); }
-        else if (isUp) s_hkDownF2 = false;
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
-    if (vk == VK_F3) {
-        if (isDown && !s_hkDownF3) { s_hkDownF3 = true; SendNotifyMessageW(s_hwnd, WM_CYCLE_PROFILE, 0, 0); }
-        else if (isUp) s_hkDownF3 = false;
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
-    if (vk == VK_F6) {
-        if (isDown && !s_hkDownF6) { s_hkDownF6 = true; SendNotifyMessageW(s_hwnd, WM_TOGGLE_SUSPEND, 0, 0); }
-        else if (isUp) s_hkDownF6 = false;
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
-    if (vk == VK_F8) {
-        if (isDown && !s_hkDownF8) { s_hkDownF8 = true; SendNotifyMessageW(s_hwnd, WM_CLOSE, 0, 0); }
-        else if (isUp) s_hkDownF8 = false;
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
-
-    // --- 2. ALWAYS-TRACK PHYSICAL LAYER ---
-    // [FIX Bug #1] Track edges BEFORE any routing or focus exits.
-    bool spaceEdgeDown = false;
-    bool spaceEdgeUp   = false;
+    // [FIX V26.5.1] All semantic processing moved to WorkerThreadFunc.
+    // Hook thread only handles `return 1` swallow decisions and pushing to queue.
+    
+    // Evaluate if Space should be swallowed
     if (vk == VK_SPACE) {
         if (isDown) {
-            if (!s_physSpaceDown) { s_physSpaceDown = true; spaceEdgeDown = true; }
-        } else {
-            if (s_physSpaceDown) { s_physSpaceDown = false; spaceEdgeUp = true; }
-        }
-    }
-
-    // --- 3. SEMANTIC ROUTING LAYER ---
-    bool isActive = IsTargetActive();
-    bool isSuspended = engine::IsSuspended();
-    bool shouldRoute = isActive && !isSuspended;
-    uint32_t caps = target_platform::GetActiveCapabilities();
-    // WASD Routing
-    int keyIdx = ScanToKeyIndex(sc);
-    if (keyIdx >= 0) {
-        assert(keyIdx < 4);
-        Key k = static_cast<Key>(keyIdx);
-        uint64_t gen = engine::dbgEventSeq.load(std::memory_order_relaxed);
-        PushEvent({false, k, isDown, timing::NowUs(), gen});
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
-    // Modifiers
-    if (vk == VK_LCONTROL) {
-        engine::OnSysKeyChange(true, isDown, shouldRoute && (caps & target_platform::CAP_CSTRAFE));
-    }
-    if (sc == 0x2E) { // 'C' key scan code
-        engine::OnSysKeyChange(false, isDown, shouldRoute && (caps & target_platform::CAP_CSTRAFE));
-    }
-    if (vk == VK_LSHIFT) {
-        engine::OnShiftChange(isDown, shouldRoute && (caps & target_platform::CAP_CSTRAFE));
-    }
-
-    // Space / Bhop Routing
-    if (vk == VK_SPACE) {
-        if (isDown) {
-            if (spaceEdgeDown) {
-                engine::OnSpaceDown(shouldRoute);
-                bool shouldRouteBhop = isActive;
-                if (shouldRouteBhop && rcfg::Get().bhopEnabled && (caps & target_platform::CAP_BHOP)) {
-                    bhop::OnSpaceDown();
-                    s_spaceSwallowed = true;
-                } else {
-                    s_spaceSwallowed = false;
-                }
+            if (!s_physSpaceDown) { s_physSpaceDown = true; } // Update physical truth early for swallow logic
+            bool isActive = IsTargetActive();
+            uint32_t caps = target_platform::GetActiveCapabilities();
+            if (isActive && rcfg::Get().bhopEnabled && (caps & target_platform::CAP_BHOP)) {
+                s_spaceSwallowed = true;
+            } else {
+                s_spaceSwallowed = false;
             }
-            if (s_spaceSwallowed) return 1;
         } else {
-            if (spaceEdgeUp) {
-                engine::OnSpaceUp();
-                bhop::OnSpaceUp();
-            }
+            if (s_physSpaceDown) { s_physSpaceDown = false; }
             if (s_spaceSwallowed) {
                 s_spaceSwallowed = false;
+                // Important: still push the Up event so Worker knows!
+                PushEvent({false, (WORD)vk, (WORD)sc, isDown, hookStartUs, engine::dbgEventSeq.load(std::memory_order_relaxed)});
                 return 1;
             }
         }
+    }
+    
+    // Always push the raw event
+    PushEvent({false, (WORD)vk, (WORD)sc, isDown, hookStartUs, engine::dbgEventSeq.load(std::memory_order_relaxed)});
+    
+    // Swallow space if needed
+    if (vk == VK_SPACE && isDown && s_spaceSwallowed) {
+        return 1;
     }
 
     return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
@@ -474,9 +524,9 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     // [FIX Bug #1] Mouse layer must also follow focus/suspend but never desync
     uint64_t gen = engine::dbgEventSeq.load(std::memory_order_relaxed);
     if (wParam == WM_LBUTTONDOWN) {
-        PushEvent({true, Key::Mouse1, true, timing::NowUs(), gen});
+        PushEvent({true, 0, 0, true, timing::NowUs(), gen});
     } else if (wParam == WM_LBUTTONUP) {
-        PushEvent({true, Key::Mouse1, false, timing::NowUs(), gen});
+        PushEvent({true, 0, 0, false, timing::NowUs(), gen});
     }
 
     return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);

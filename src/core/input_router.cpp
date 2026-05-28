@@ -14,7 +14,7 @@
 
 namespace engine {
 
-void HandleKeyDown(Key k, bool routeSemantic) {
+void HandleKeyDown(Key k, bool routeSemantic, int64_t enqueueUs) {
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
@@ -29,7 +29,7 @@ void HandleKeyDown(Key k, bool routeSemantic) {
     } tracer{startUs, k};
 
     int ki_k = ki(k);
-    int64_t nowUs = startUs;
+    int64_t nowUs = enqueueUs; // Use exact physical time!
     int64_t nowMs = nowUs / 1000;
     Axis ax = keymap::KeyAxis[ki_k];
 
@@ -85,6 +85,7 @@ void HandleKeyDown(Key k, bool routeSemantic) {
             s_state.logical[ki_k] = true;
         }
         PublishEngineState();
+        ValidateAxisState();
     }
     batch.flush();
     _doNotify = true;
@@ -93,7 +94,7 @@ void HandleKeyDown(Key k, bool routeSemantic) {
 // ════════════════════════════════════════════════════════════════
 //  HANDLE KEY UP  (§16)
 // ════════════════════════════════════════════════════════════════
-void HandleKeyUp(Key k, bool routeSemantic) {
+void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs) {
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
@@ -107,8 +108,8 @@ void HandleKeyUp(Key k, bool routeSemantic) {
         }
     } tracer{startUs, k};
 
-    int ki_k  = ki(k);
-    int64_t nowUs = startUs;
+    int ki_k = ki(k);
+    int64_t nowUs = enqueueUs; // Use exact physical time!
     int64_t nowMs = nowUs / 1000;
     Axis ax   = keymap::KeyAxis[ki_k];
     Key oppK  = keymap::Opposite[ki_k];
@@ -154,7 +155,7 @@ void HandleKeyUp(Key k, bool routeSemantic) {
 
                 bool strafed = false;
                 if (reason == ReleaseReason::Normal && !s_state.phys[ki_opp]) {
-                    strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch);
+                    strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch, enqueueUs);
                 }
 
                 if (!strafed && s_state.logical[ki_k]) {
@@ -166,6 +167,7 @@ void HandleKeyUp(Key k, bool routeSemantic) {
             }
         }
         PublishEngineState();
+        ValidateAxisState();
     }
     batch.flush();
     _doNotify = true;
