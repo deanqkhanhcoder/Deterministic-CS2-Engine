@@ -47,6 +47,8 @@ struct PhysicalEvent {
     bool isMouse; // true for mouse, false for keyboard
     Key key;
     bool isDown;
+    int64_t timestamp_enqueue_us;
+    uint64_t generation_id;
 };
 
 static std::mutex s_eventMutex;
@@ -57,19 +59,28 @@ static int s_eventTail = 0;
 
 static void PushEvent(const PhysicalEvent& ev) {
     std::lock_guard<std::mutex> lock(s_eventMutex);
+    int current_depth = (s_eventHead - s_eventTail + 256) % 256;
+    if (current_depth > 16) {
+        DLOG_WARN(Hook, "QUEUE_STARVATION_ALERT depth=%d", current_depth);
+    }
     int next = (s_eventHead + 1) % 256;
     if (next != s_eventTail) { // don't overwrite if full
         s_eventQueue[s_eventHead] = ev;
         s_eventHead = next;
         s_eventCv.notify_one();
+    } else {
+        DLOG_ERR(Hook, "QUEUE_OVERFLOW_ALERT dropping event");
     }
 }
 
 static std::thread s_workerThread;
 static std::atomic<bool> s_workerRunning{false};
 
+static bool IsTargetActive();
+
 void WorkerThreadFunc() {
     topology::PinBackgroundThread(); // Pin to background
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     
     while (s_workerRunning) {
         PhysicalEvent ev;
@@ -82,6 +93,15 @@ void WorkerThreadFunc() {
             s_eventTail = (s_eventTail + 1) % 256;
         }
         
+        int64_t dequeue_time = timing::NowUs();
+        int64_t queue_latency_us = dequeue_time - ev.timestamp_enqueue_us;
+        DLOG_TRACE(Hook, "[FIRE_TRACE] QUEUE_LATENCY_US latency=%lld gen=%llu", queue_latency_us, ev.generation_id);
+        
+        if (queue_latency_us > 20000) {
+            DLOG_ERR(Hook, "STALE_EVENT_DROPPED latency=%lld gen=%llu", queue_latency_us, ev.generation_id);
+            continue; // Drop the event!
+        }
+
         // Delegate to state engine outside the queue lock!
         if (ev.isMouse) {
             if (ev.isDown) {
@@ -260,7 +280,10 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode < 0) return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
 
     auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
-    if (info->flags & LLKHF_INJECTED) return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
+    if (info->flags & LLKHF_INJECTED) {
+        DLOG_TRACE(Hook, "INJECTED_EVENT_BYPASS");
+        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
+    }
 
     struct ScopedTrace {
         int64_t startUs;
@@ -296,6 +319,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     // [FIX COUNTER-STRAFE] If Byfron strips LLKHF_INJECTED, we MUST use dwExtraInfo to identify our own injections.
     // Otherwise, we swallow our own counter-strafe injections and poison our physical state.
     if (info->dwExtraInfo == 0x1337BEEF) {
+        DLOG_TRACE(Hook, "INJECTED_EVENT_BYPASS");
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
 
@@ -348,7 +372,8 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (keyIdx >= 0) {
         assert(keyIdx < 4);
         Key k = static_cast<Key>(keyIdx);
-        PushEvent({false, k, isDown});
+        uint64_t gen = engine::dbgEventSeq.load(std::memory_order_relaxed);
+        PushEvent({false, k, isDown, timing::NowUs(), gen});
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     // Modifiers
@@ -429,6 +454,7 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
     if (info->flags & LLMHF_INJECTED) {
         if (info->dwExtraInfo == 0x1337BEEF) {
+            DLOG_TRACE(Hook, "INJECTED_EVENT_BYPASS");
             return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
         }
     }
@@ -450,10 +476,11 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     } tracer{hookStartUs, wParam, procNumber};
 
     // [FIX Bug #1] Mouse layer must also follow focus/suspend but never desync
+    uint64_t gen = engine::dbgEventSeq.load(std::memory_order_relaxed);
     if (wParam == WM_LBUTTONDOWN) {
-        PushEvent({true, Key::Mouse1, true});
+        PushEvent({true, Key::Mouse1, true, timing::NowUs(), gen});
     } else if (wParam == WM_LBUTTONUP) {
-        PushEvent({true, Key::Mouse1, false});
+        PushEvent({true, Key::Mouse1, false, timing::NowUs(), gen});
     }
 
     return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
