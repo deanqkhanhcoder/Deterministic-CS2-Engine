@@ -17,4 +17,7 @@ void KeyDownUp(Key k);  // Down then Up in one call
 // Raw SendInput wrapper for advanced batching
 void SendBatch(INPUT* inputs, int count);
 
+void Mouse1Down();
+void Mouse1Up();
+
 } // namespace injection

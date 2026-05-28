@@ -99,4 +99,26 @@ void SendBatch(INPUT* inputs, int count) {
     }
 }
 
+void Mouse1Down() {
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    input.mi.dwExtraInfo = 0x1337BEEF;
+    int64_t preSyscall = timing::NowUs();
+    SendInput(1, &input, sizeof(INPUT));
+    int64_t postSyscall = timing::NowUs();
+    DLOG_TRACE(Runtime, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+}
+
+void Mouse1Up() {
+    INPUT input = {};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    input.mi.dwExtraInfo = 0x1337BEEF;
+    int64_t preSyscall = timing::NowUs();
+    SendInput(1, &input, sizeof(INPUT));
+    int64_t postSyscall = timing::NowUs();
+    DLOG_TRACE(Runtime, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+}
+
 } // namespace injection

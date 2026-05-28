@@ -65,14 +65,8 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
         s_state.autoFire.state = FireState::Idle;
         
         if (needsMouse1) {
-            INPUT input = {};
-            input.type = INPUT_MOUSE;
-            input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-            input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected
-            int64_t preSyscall = timing::NowUs();
-            SendInput(1, &input, sizeof(INPUT));
-            int64_t postSyscall = timing::NowUs();
-            DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+            // Push mouse event to batch instead of SendInput!
+            batch.pushEvent(true, Key::Mouse1, true);
             s_state.autoFire.hasDispatchedShot = true;
         }
         
