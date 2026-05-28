@@ -20,6 +20,8 @@
 
 namespace capture {
 
+thread_local int s_hookDepth = 0;
+
 static HHOOK s_keyboardHook = nullptr;
 static HHOOK s_mouseHook    = nullptr;
 static HWND  s_hwnd         = nullptr;
@@ -155,6 +157,16 @@ static int ScanToKeyIndex(DWORD scanCode) {
 //  KEYBOARD HOOK CALLBACK
 // ════════════════════════════════════════════════════════════════
 static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    struct HookDepthGuard {
+        HookDepthGuard() { s_hookDepth++; }
+        ~HookDepthGuard() { s_hookDepth--; }
+    } guard;
+
+    if (s_hookDepth > 1) {
+        DLOG_ERR(Hook, "[FIRE_TRACE] RE-ENTRANCY DETECTED depth=%d", s_hookDepth);
+        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
+    }
+
     int64_t hookStartUs = timing::NowUs();
 #if MARCO_ENABLE_TELEMETRY
     engine::dbgLastHookUs.store(hookStartUs, std::memory_order_relaxed);
@@ -335,6 +347,16 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 //  MOUSE HOOK CALLBACK
 // ════════════════════════════════════════════════════════════════
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    struct HookDepthGuard {
+        HookDepthGuard() { s_hookDepth++; }
+        ~HookDepthGuard() { s_hookDepth--; }
+    } guard;
+
+    if (s_hookDepth > 1) {
+        DLOG_ERR(Hook, "[FIRE_TRACE] RE-ENTRANCY DETECTED depth=%d", s_hookDepth);
+        return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
+    }
+
     int64_t hookStartUs = timing::NowUs();
 #if MARCO_ENABLE_TELEMETRY
     engine::dbgLastHookUs.store(hookStartUs, std::memory_order_relaxed);
