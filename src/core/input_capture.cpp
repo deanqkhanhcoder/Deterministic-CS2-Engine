@@ -17,6 +17,8 @@
 #include <cassert>
 #include <atomic>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
 namespace capture {
 
@@ -168,7 +170,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         ~HookTimer() {
             int64_t end = timing::NowUs();
             if (end - start > 1000) {
-                DLOG_TRACE(Capture, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
+                DLOG_TRACE(Runtime, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
             }
         }
     } _hookTimer;
@@ -369,7 +371,7 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         ~HookTimer() {
             int64_t end = timing::NowUs();
             if (end - start > 1000) {
-                DLOG_TRACE(Capture, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
+                DLOG_TRACE(Runtime, "[FIRE_TRACE] HOOK_CALLBACK_US duration=%lld", (end - start));
             }
         }
     } _hookTimer;
@@ -444,6 +446,42 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 // ════════════════════════════════════════════════════════════════
 //  INSTALL / UNINSTALL
 // ════════════════════════════════════════════════════════════════
+static std::thread s_hookThread;
+static std::atomic<bool> s_hookThreadRunning{false};
+static std::atomic<bool> s_hookInstalled{false};
+static std::mutex s_hookMutex;
+static std::condition_variable s_hookCv;
+static DWORD s_hookThreadId = 0;
+
+void HookThreadFunc() {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    s_hookThreadId = GetCurrentThreadId();
+    
+    s_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardProc, GetModuleHandleW(nullptr), 0);
+    s_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseProc, GetModuleHandleW(nullptr), 0);
+    
+    bool success = (s_keyboardHook && s_mouseHook);
+    s_hookInstalled = success;
+    
+    // Notify start
+    s_hookCv.notify_all();
+    
+    if (success) {
+        MSG msg;
+        while (GetMessageW(&msg, nullptr, 0, 0)) {
+            if (msg.message == WM_QUIT) break;
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    
+    if (s_keyboardHook) UnhookWindowsHookEx(s_keyboardHook);
+    if (s_mouseHook) UnhookWindowsHookEx(s_mouseHook);
+    s_keyboardHook = nullptr;
+    s_mouseHook = nullptr;
+    s_hookInstalled = false;
+}
+
 void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime) {
     (void)hWinEventHook;
     (void)idObject;
@@ -456,28 +494,33 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, 
 }
 
 bool Install(HWND hwnd) {
+    if (s_hookThreadRunning) return true;
     s_hwnd = hwnd;
     s_activeHwnd.store(hwnd, std::memory_order_release);
     
-    s_focusRunning.store(true);
-    s_focusThread = std::thread([]() {
-        s_focusThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
-        topology::PinBackgroundThread();
-        s_winEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
-        MSG msg;
-        while (s_focusRunning.load() && GetMessage(&msg, nullptr, 0, 0)) {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
-        if (s_winEventHook) UnhookWinEvent(s_winEventHook);
-    });
+    if (!s_focusRunning.load()) {
+        s_focusRunning.store(true);
+        s_focusThread = std::thread([]() {
+            s_focusThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
+            topology::PinBackgroundThread();
+            s_winEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+            MSG msg;
+            while (s_focusRunning.load() && GetMessage(&msg, nullptr, 0, 0)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+            if (s_winEventHook) UnhookWinEvent(s_winEventHook);
+        });
+    }
 
     PollTarget();
 
-    s_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardProc, GetModuleHandle(nullptr), 0);
-    s_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, MouseProc, GetModuleHandle(nullptr), 0);
+    s_hookThreadRunning = true;
+    std::unique_lock<std::mutex> lock(s_hookMutex);
+    s_hookThread = std::thread(HookThreadFunc);
+    s_hookCv.wait(lock); // Wait for thread to attempt install
 
-    if (!s_keyboardHook || !s_mouseHook) {
+    if (!s_hookInstalled.load()) {
         DLOG_ERR(Hook, "Failed to install hooks");
         Uninstall();
         return false;
@@ -488,9 +531,16 @@ bool Install(HWND hwnd) {
 }
 
 void Uninstall() {
-    if (s_keyboardHook) UnhookWindowsHookEx(s_keyboardHook);
-    if (s_mouseHook) UnhookWindowsHookEx(s_mouseHook);
-    s_keyboardHook = s_mouseHook = nullptr;
+    if (s_hookThreadRunning) {
+        s_hookThreadRunning = false;
+        if (s_hookThreadId) {
+            PostThreadMessageW(s_hookThreadId, WM_QUIT, 0, 0);
+        }
+        if (s_hookThread.joinable()) {
+            s_hookThread.join();
+        }
+        s_hookThreadId = 0;
+    }
     
     if (s_focusRunning.load()) {
         s_focusRunning.store(false);
@@ -510,13 +560,13 @@ void Uninstall() {
 }
 
 bool Reinstall() {
-    if (s_keyboardHook && s_mouseHook) return true;
+    if (s_hookInstalled.load()) return true;
     Uninstall();
     return Install(s_hwnd);
 }
 
 bool IsHookInstalled() {
-    return s_keyboardHook != nullptr;
+    return s_hookInstalled.load();
 }
 
 HWND GetActiveWindowFast() {
