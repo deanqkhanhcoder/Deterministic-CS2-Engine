@@ -47,6 +47,10 @@ void KeyDown(Key k) {
     UINT sent = SendInput(1, &s_keyDown[idx], sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
     DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+    int64_t duration = postSyscall - preSyscall;
+    if (duration > 20000) {
+        DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
+    }
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent == 0) {
         DLOG_ERR(Injection, "SendInput FAILED for %s DOWN (err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), GetLastError());
@@ -62,6 +66,10 @@ void KeyUp(Key k) {
     UINT sent = SendInput(1, &s_keyUp[idx], sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
     DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+    int64_t duration = postSyscall - preSyscall;
+    if (duration > 20000) {
+        DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
+    }
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent == 0) {
         DLOG_ERR(Injection, "SendInput FAILED for %s UP (err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), GetLastError());
@@ -78,6 +86,10 @@ void KeyDownUp(Key k) {
     UINT sent = SendInput(2, batch, sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
     DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+    int64_t duration = postSyscall - preSyscall;
+    if (duration > 20000) {
+        DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
+    }
     DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END key=%s", reinterpret_cast<int64_t>(keymap::KeyName[idx]));
     if (sent < 2) {
         DLOG_ERR(Injection, "SendInput FAILED for %s DOWN+UP (sent=%u, err=%lu)", reinterpret_cast<int64_t>(keymap::KeyName[idx]), sent, GetLastError());
@@ -92,6 +104,10 @@ void SendBatch(INPUT* inputs, int count) {
         UINT sent = SendInput(count, inputs, sizeof(INPUT));
         int64_t postSyscall = timing::NowUs();
         DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+        int64_t duration = postSyscall - preSyscall;
+        if (duration > 20000) {
+            DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
+        }
         DLOG_INFO(Injection, "[FIRE_TRACE] phase=SENDINPUT_DISPATCH_END count=%d", count);
         if (sent < (UINT)count) {
             DLOG_ERR(Injection, "SendInput batch FAILED (requested=%d sent=%u err=%lu)", count, sent, GetLastError());
@@ -108,6 +124,10 @@ void Mouse1Down() {
     SendInput(1, &input, sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
     DLOG_TRACE(Runtime, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+    int64_t duration = postSyscall - preSyscall;
+    if (duration > 20000) {
+        DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
+    }
 }
 
 void Mouse1Up() {
@@ -119,6 +139,10 @@ void Mouse1Up() {
     SendInput(1, &input, sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
     DLOG_TRACE(Runtime, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
+    int64_t duration = postSyscall - preSyscall;
+    if (duration > 20000) {
+        DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
+    }
 }
 
 } // namespace injection
