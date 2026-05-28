@@ -314,10 +314,16 @@ static void TimerThreadFunc() {
                 engine::s_state.autoFire.stats.timer_wake_actual_us = actualWakeUs;
                 LOG_FIRE_TRACE("TIMER_WAKE_ACTUAL", engine::s_state.autoFire.fireGenerationId);
             }
+            int64_t cb_start = timing::NowUs();
             if (slot.cb) {
                 slot.cb();
             } else {
                 engine::OnTimerExpired(slot.key, slot.id);
+            }
+            int64_t cb_end = timing::NowUs();
+            int64_t cb_dur = cb_end - cb_start;
+            if (cb_dur > 1000) {
+                DLOG_WARN(Timing, "[FIRE_TRACE] CALLBACK_EXECUTION_US duration=%lld", cb_dur);
             }
 
         } else {
