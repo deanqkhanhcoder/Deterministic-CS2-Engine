@@ -56,7 +56,6 @@ BrakeResult InjectAutoFireBrake(Key heldKey, InjectionBatch& batch) {
 
 void CancelPendingShotLocked(InjectionBatch& batch) {
     if (s_state.autoFire.state != FireState::Idle) {
-        DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=0 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
         bool needsMouse1 = false;
         if (s_state.autoFire.state == FireState::Stabilizing) {
             timing::CancelTimer(Key::Mouse1);
@@ -117,7 +116,6 @@ void CancelPendingShotLocked(InjectionBatch& batch) {
         }
 
         LOG_FIRE_TRACE("RESTORE_PHASE", s_state.autoFire.fireGenerationId);
-        DLOG_TRACE(Runtime, "AutoFire Cancelled & Movement Restored");
     }
 }
 
@@ -194,7 +192,6 @@ bool OnLButtonDown() {
         applyBrake(Axis::Y); applyBrake(Axis::X);
         
         if (needsShot) {
-            DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=1 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
             s_state.autoFire.state = FireState::Stabilizing;
         }
         PublishEngineState();
@@ -219,7 +216,6 @@ bool OnLButtonDown() {
                 if (s_state.autoFire.state == FireState::Stabilizing && 
                     s_state.autoFire.fireGenerationId == currentGen) {
                     
-                    DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=2 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
                     s_state.autoFire.state = FireState::Fired;
                     s_state.autoFire.hasDispatchedShot = true;
                     shouldFire = true;
@@ -238,8 +234,6 @@ bool OnLButtonDown() {
                 int64_t totalLatency = postSyscall - s_state.autoFire.stats.m1_down_us;
                 
                 LOG_FIRE_TRACE("SHOT_DISPATCH", currentGen);
-                DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
-                DLOG_TRACE(Injection, "[FIRE_TRACE] PHYSICAL_CLICK_TO_SHOT_US latency=%lld", totalLatency);
             }
         };
 

@@ -46,7 +46,6 @@ void KeyDown(Key k) {
     int64_t preSyscall = timing::NowUs();
     UINT sent = SendInput(1, &s_keyDown[idx], sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
-    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     int64_t duration = postSyscall - preSyscall;
     if (duration > 20000) {
         DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
@@ -65,7 +64,6 @@ void KeyUp(Key k) {
     int64_t preSyscall = timing::NowUs();
     UINT sent = SendInput(1, &s_keyUp[idx], sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
-    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     int64_t duration = postSyscall - preSyscall;
     if (duration > 20000) {
         DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
@@ -85,7 +83,6 @@ void KeyDownUp(Key k) {
     int64_t preSyscall = timing::NowUs();
     UINT sent = SendInput(2, batch, sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
-    DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     int64_t duration = postSyscall - preSyscall;
     if (duration > 20000) {
         DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
@@ -103,7 +100,6 @@ void SendBatch(INPUT* inputs, int count) {
         int64_t preSyscall = timing::NowUs();
         UINT sent = SendInput(count, inputs, sizeof(INPUT));
         int64_t postSyscall = timing::NowUs();
-        DLOG_TRACE(Injection, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
         int64_t duration = postSyscall - preSyscall;
         if (duration > 20000) {
             DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
@@ -123,7 +119,6 @@ void Mouse1Down() {
     int64_t preSyscall = timing::NowUs();
     SendInput(1, &input, sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
-    DLOG_TRACE(Runtime, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     int64_t duration = postSyscall - preSyscall;
     if (duration > 20000) {
         DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);
@@ -138,7 +133,6 @@ void Mouse1Up() {
     int64_t preSyscall = timing::NowUs();
     SendInput(1, &input, sizeof(INPUT));
     int64_t postSyscall = timing::NowUs();
-    DLOG_TRACE(Runtime, "[FIRE_TRACE] SENDINPUT_SYSCALL_US duration=%lld", (postSyscall - preSyscall));
     int64_t duration = postSyscall - preSyscall;
     if (duration > 20000) {
         DLOG_WARN(Injection, "SENDINPUT_STALL_ALERT duration=%lld", duration);

@@ -95,7 +95,6 @@ void WorkerThreadFunc() {
         
         int64_t dequeue_time = timing::NowUs();
         int64_t queue_latency_us = dequeue_time - ev.timestamp_enqueue_us;
-        DLOG_TRACE(Hook, "[FIRE_TRACE] QUEUE_LATENCY_US latency=%lld gen=%llu", queue_latency_us, ev.generation_id);
         
         if (queue_latency_us > 20000) {
             DLOG_ERR(Hook, "STALE_EVENT_DROPPED latency=%lld gen=%llu", queue_latency_us, ev.generation_id);
@@ -281,7 +280,6 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
     auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
     if (info->flags & LLKHF_INJECTED) {
-        DLOG_TRACE(Hook, "INJECTED_EVENT_BYPASS");
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
 
@@ -319,7 +317,6 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     // [FIX COUNTER-STRAFE] If Byfron strips LLKHF_INJECTED, we MUST use dwExtraInfo to identify our own injections.
     // Otherwise, we swallow our own counter-strafe injections and poison our physical state.
     if (info->dwExtraInfo == 0x1337BEEF) {
-        DLOG_TRACE(Hook, "INJECTED_EVENT_BYPASS");
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
 
@@ -454,7 +451,6 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
     if (info->flags & LLMHF_INJECTED) {
         if (info->dwExtraInfo == 0x1337BEEF) {
-            DLOG_TRACE(Hook, "INJECTED_EVENT_BYPASS");
             return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
         }
     }
