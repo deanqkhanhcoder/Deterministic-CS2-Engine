@@ -17,6 +17,7 @@
 #include <cassert>
 #include <atomic>
 #include <thread>
+#include <mutex>
 
 namespace capture {
 
@@ -76,8 +77,11 @@ static void ReconcileSwallow() {
     }
 }
 
+static std::mutex s_focusMutex;
+
 static bool IsTargetActive() {
-HWND fg = s_activeHwnd.load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lock(s_focusMutex);
+    HWND fg = s_activeHwnd.load(std::memory_order_acquire);
     if (!fg) return false;
 
     static HWND s_lastEvaluatedFg = nullptr;
@@ -218,28 +222,78 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
     // --- 1. GLOBAL HOTKEYS (Before Focus Filter) ---
     if (vk == VK_F1) {
-        if (isDown && !s_hkDownF1) { s_hkDownF1 = true; SendNotifyMessageW(s_hwnd, WM_BHOP_TOGGLE, 0, 0); }
-        else if (isUp) s_hkDownF1 = false;
+        static int64_t s_hkLastDownF1 = 0;
+        int64_t now = timing::NowUs();
+        bool isAutoRepeat = s_hkDownF1 && (now - s_hkLastDownF1 < 500000);
+        if (isDown) {
+            s_hkLastDownF1 = now;
+            if (!isAutoRepeat) {
+                s_hkDownF1 = true;
+                SendNotifyMessageW(s_hwnd, WM_BHOP_TOGGLE, 0, 0);
+            }
+        } else if (isUp) {
+            s_hkDownF1 = false;
+        }
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F2) {
-        if (isDown && !s_hkDownF2) { s_hkDownF2 = true; SendNotifyMessageW(s_hwnd, WM_BHOP_CYCLE_MODE, 0, 0); }
-        else if (isUp) s_hkDownF2 = false;
+        static int64_t s_hkLastDownF2 = 0;
+        int64_t now = timing::NowUs();
+        bool isAutoRepeat = s_hkDownF2 && (now - s_hkLastDownF2 < 500000);
+        if (isDown) {
+            s_hkLastDownF2 = now;
+            if (!isAutoRepeat) {
+                s_hkDownF2 = true;
+                SendNotifyMessageW(s_hwnd, WM_BHOP_CYCLE_MODE, 0, 0);
+            }
+        } else if (isUp) {
+            s_hkDownF2 = false;
+        }
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F3) {
-        if (isDown && !s_hkDownF3) { s_hkDownF3 = true; SendNotifyMessageW(s_hwnd, WM_CYCLE_PROFILE, 0, 0); }
-        else if (isUp) s_hkDownF3 = false;
+        static int64_t s_hkLastDownF3 = 0;
+        int64_t now = timing::NowUs();
+        bool isAutoRepeat = s_hkDownF3 && (now - s_hkLastDownF3 < 500000);
+        if (isDown) {
+            s_hkLastDownF3 = now;
+            if (!isAutoRepeat) {
+                s_hkDownF3 = true;
+                SendNotifyMessageW(s_hwnd, WM_CYCLE_PROFILE, 0, 0);
+            }
+        } else if (isUp) {
+            s_hkDownF3 = false;
+        }
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F6) {
-        if (isDown && !s_hkDownF6) { s_hkDownF6 = true; SendNotifyMessageW(s_hwnd, WM_TOGGLE_SUSPEND, 0, 0); }
-        else if (isUp) s_hkDownF6 = false;
+        static int64_t s_hkLastDownF6 = 0;
+        int64_t now = timing::NowUs();
+        bool isAutoRepeat = s_hkDownF6 && (now - s_hkLastDownF6 < 500000);
+        if (isDown) {
+            s_hkLastDownF6 = now;
+            if (!isAutoRepeat) {
+                s_hkDownF6 = true;
+                SendNotifyMessageW(s_hwnd, WM_TOGGLE_SUSPEND, 0, 0);
+            }
+        } else if (isUp) {
+            s_hkDownF6 = false;
+        }
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
     if (vk == VK_F8) {
-        if (isDown && !s_hkDownF8) { s_hkDownF8 = true; SendNotifyMessageW(s_hwnd, WM_CLOSE, 0, 0); }
-        else if (isUp) s_hkDownF8 = false;
+        static int64_t s_hkLastDownF8 = 0;
+        int64_t now = timing::NowUs();
+        bool isAutoRepeat = s_hkDownF8 && (now - s_hkLastDownF8 < 500000);
+        if (isDown) {
+            s_hkLastDownF8 = now;
+            if (!isAutoRepeat) {
+                s_hkDownF8 = true;
+                SendNotifyMessageW(s_hwnd, WM_CLOSE, 0, 0);
+            }
+        } else if (isUp) {
+            s_hkDownF8 = false;
+        }
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
 
@@ -358,9 +412,10 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
     auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
     if (info->flags & LLMHF_INJECTED) {
-        if (info->dwExtraInfo == 0x1337BEEF) {
-            return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
-        }
+        return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
+    }
+    if (info->dwExtraInfo == 0x1337BEEF) {
+        return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
     }
 
     struct ScopedTrace {
@@ -383,14 +438,8 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (wParam == WM_LBUTTONDOWN) {
         if (!engine::IsSuspended() && IsTargetActive()) {
             if (target_platform::GetActiveCapabilities() & target_platform::CAP_CSTRAFE) {
-                if (engine::OnLButtonDown()) {
-                    return 1; // Swallow the mouse click for delayed firing
-                }
+                engine::OnLButtonDown();
             }
-        }
-    } else if (wParam == WM_LBUTTONUP) {
-        if (!engine::IsSuspended() && IsTargetActive()) {
-            engine::OnLButtonUp();
         }
     }
 

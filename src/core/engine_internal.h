@@ -15,10 +15,7 @@ namespace cfg_rt {
     inline int64_t MIN_TAP_US()           { return rcfg::Get().minTapUs; }
     inline int    LATENCY_MARGIN_MS()     { return rcfg::Get().latencyMarginMs; }
     inline int    MIN_STOP_MS()           { return rcfg::Get().minStopMs; }
-    inline int    SPACE_DELAY_MS()        { return rcfg::Get().spaceDelayMs; }
-    inline int    BURST_THRESHOLD()       { return rcfg::Get().burstThreshold; }
-    inline int    SPRAY_DELAY_MS()        { return rcfg::Get().sprayDelayMs; }
-    inline int    TAP_DELAY_MS()          { return rcfg::Get().tapDelayMs; }
+
     inline int    WATCHDOG_STUCK_MS()     { return rcfg::Get().watchdogStuckMs; }
     inline int    MAX_SCALE_MS()          { return rcfg::Get().maxScaleMs; }
 }
@@ -56,8 +53,8 @@ void ReconcileInternal(bool suspending, InjectionBatch& batch);
 
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs);
 
-// Autofire
-int64_t InjectAutoFireBrake(Key heldKey, InjectionBatch& batch);
-void CancelPendingShotLocked(InjectionBatch& batch);
+bool OnLButtonDown();
+void OnLButtonUp();
+void CancelPendingShot();
 
 } // namespace engine

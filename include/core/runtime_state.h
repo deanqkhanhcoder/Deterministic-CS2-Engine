@@ -21,7 +21,7 @@ struct RuntimeSnapshot {
     bool      phys[4];
     bool      logical[4];
     bool      bundleActive;
-    int64_t   lastCounterMs;
+
 
     // Bhop
     bool       bhopEnabled;
@@ -60,7 +60,7 @@ struct RuntimeSnapshot {
     int64_t   wakeVarianceUs;
     int64_t   timerOversleepPeakUs;
 
-    bool      subTickCompressionActive;
+
     int64_t   overlapAccuracyUs;
     wchar_t   activeBrakeProfileName[32];
     int64_t   profileOverlapUs;

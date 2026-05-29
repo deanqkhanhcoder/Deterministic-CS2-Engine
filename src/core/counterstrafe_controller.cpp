@@ -160,10 +160,6 @@ void ApplyOverlapCounterStrafe(Key releaseKey, Key counterKey, int64_t overlapUs
     }
 }
 
-int AlignToSubtick(double calculatedDurMs, double paddingTicks) {
-    const double tickMs = 15.625;
-    return (int)(std::ceil((calculatedDurMs / tickMs) + paddingTicks) * tickMs);
-}
 
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     const RuntimeConfig& rc = rcfg::Get();
@@ -254,7 +250,7 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     int pureDurMs = movement::LookupStopDur2D(v_target, v_orth, wish_mode, s_state.IsCrouching());
     
     // 5. Apply authority biases
-    int alignedDurMs = AlignToSubtick(pureDurMs, rc.subtickPaddingTicks);
+    int alignedDurMs = pureDurMs;
     
     auto applyShape = [&](int dur) {
         double d = (double)dur * profile.brake_bias_multiplier;

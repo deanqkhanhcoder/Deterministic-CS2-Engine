@@ -15,27 +15,6 @@
 namespace engine {
 
 void OnTimerExpired(Key k, uint64_t expectedTimerId) {
-    if (k == Key::Mouse1) {
-        {
-            std::lock_guard<std::mutex> lock(s_stateMutex);
-            if (!s_state.autoFire.active || s_state.autoFire.expectedShotId != expectedTimerId) {
-                return; // Stale or cancelled shot
-            }
-        }
-        
-        // Inject the mouse click!
-        INPUT input = {};
-        input.type = INPUT_MOUSE;
-        input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected so we don't swallow it again
-        SendInput(1, &input, sizeof(INPUT));
-        DLOG_TRACE(Runtime, "AutoFire Executed: Left Down injected");
-        
-        // Restore keys
-        CancelPendingShot();
-        return;
-    }
-
     bool _doNotify = false;
     int ki_k = ki(k);
     DLOG_TRACE(Runtime, "OnTimerExpired: Executing release for %s", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]));
@@ -49,10 +28,38 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
                        reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), s_state.expectedTimerId[ki_k], expectedTimerId);
             return;
         }
+        
+        // Release the injected counter key if it's not physically held
         if (s_state.logical[ki_k] && !s_state.phys[ki_k]) {
             s_state.logical[ki_k] = false;
             batch.push(k, false);
         }
+        
+        // Restore opposite key if it's physically held
+        Key oppKey = keymap::Opposite[ki_k];
+        int ki_opp = ki(oppKey);
+        if (s_state.phys[ki_opp] && !s_state.logical[ki_opp]) {
+            s_state.logical[ki_opp] = true;
+            batch.push(oppKey, true);
+        }
+        
+        // Update axis state
+        Axis ax = keymap::KeyAxis[ki_k];
+        Key posK = keymap::AxisPosKey[ai(ax)];
+        Key negK = keymap::AxisNegKey[ai(ax)];
+        bool posL = s_state.logical[ki(posK)];
+        bool negL = s_state.logical[ki(negK)];
+        
+        if (posL && negL) {
+            s_state.axisState[ai(ax)] = AxisState::Conflict;
+        } else if (posL) {
+            s_state.axisState[ai(ax)] = AxisState::Positive;
+        } else if (negL) {
+            s_state.axisState[ai(ax)] = AxisState::Negative;
+        } else {
+            s_state.axisState[ai(ax)] = AxisState::None;
+        }
+        
         PublishEngineState();
     }
     batch.flush();

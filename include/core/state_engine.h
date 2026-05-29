@@ -38,6 +38,7 @@ void OnSpaceUp();
 bool OnLButtonDown();
 void OnLButtonUp();
 
+
 void RebuildState();
 
 // ── Timer expiry callback ──
@@ -53,7 +54,7 @@ void TriggerEmergencyFlush();
 void ToggleSuspend();
 bool IsSuspended();
 void ClearHeldKeys();
-void CancelPendingShot();
+
 
 // ── State access ──
 State GetState();

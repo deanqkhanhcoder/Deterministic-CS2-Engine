@@ -84,18 +84,6 @@ void Apply(const RuntimeConfig& newCfg) {
     if (validated.maxScaleMs < 1) validated.maxScaleMs = 1;
     if (validated.maxScaleMs > 2000) validated.maxScaleMs = 2000;
 
-    if (validated.tapDelayMs < 1) validated.tapDelayMs = 1;
-    if (validated.tapDelayMs > 1000) validated.tapDelayMs = 1000;
-
-    if (validated.sprayDelayMs < 1) validated.sprayDelayMs = 1;
-    if (validated.sprayDelayMs > 2000) validated.sprayDelayMs = 2000;
-
-    if (validated.burstThreshold < 1) validated.burstThreshold = 1;
-    if (validated.burstThreshold > 8) validated.burstThreshold = 8; // [FIX BUG #7] Capped to cfg::CLICK_HISTORY_MAX
-
-    if (validated.spaceDelayMs < 1) validated.spaceDelayMs = 1;
-    if (validated.spaceDelayMs > 5000) validated.spaceDelayMs = 5000;
-
     if (validated.latencyMarginMs < 0) validated.latencyMarginMs = 0;
     if (validated.latencyMarginMs > 500) validated.latencyMarginMs = 500;
 
@@ -199,7 +187,6 @@ void Apply(const RuntimeConfig& newCfg) {
 
     // --- Safe Mode Override Layer ---
     if (validated.safeModeEnabled) {
-        validated.subtickPaddingTicks = 0.0;
         validated.latencyMarginMs = 4;
         validated.minStopMs = 6;
         

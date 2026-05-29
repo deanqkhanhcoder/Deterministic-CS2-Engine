@@ -49,8 +49,6 @@ struct alignas(64) State {
     bool    sysLCtrl            = false;
     bool    sysC                = false;
     bool    spacePhys           = false;  // [FIX Bug #1] Always-track physical space
-    int64_t lastSpaceTimeMs     = 0;
-    int64_t lastCounterMs       = 0;
 
     // ── Sub-states ──
     WalkState   walk;
@@ -59,17 +57,7 @@ struct alignas(64) State {
     // ── Script suspended state ──
     bool suspended = false;
 
-    struct {
-        bool active = false;
-        uint8_t suspendedMovementMask = 0;
-        uint8_t injectedCounterMask = 0;
-        uint64_t expectedShotId = 0;
-    } autoFire;
 
-    // ── Click history (circular buffer) ──
-    int64_t clickHistory[cfg::CLICK_HISTORY_MAX] = {};
-    int     clickHistoryHead    = 0;
-    int     clickHistoryCount   = 0;
 
     // ── Reset all state ──
     void Reset() {
@@ -83,45 +71,11 @@ struct alignas(64) State {
         conflictEnteredTimeMs[0] = conflictEnteredTimeMs[1] = 0;
 
         sysLCtrl = sysC = false;
-        lastSpaceTimeMs = lastCounterMs = 0;
-        clickHistoryHead = clickHistoryCount = 0;
 
         walk = WalkState{};
         mem  = MemoryState{};
     }
 
-    // ── Click history helpers ──
-    void PushClick(int64_t timeMs) {
-        int idx = (clickHistoryHead + clickHistoryCount) % cfg::CLICK_HISTORY_MAX;
-        if (clickHistoryCount < cfg::CLICK_HISTORY_MAX) {
-            clickHistory[idx] = timeMs;
-            clickHistoryCount++;
-        } else {
-            // Overwrite oldest
-            clickHistory[clickHistoryHead] = timeMs;
-            clickHistoryHead = (clickHistoryHead + 1) % cfg::CLICK_HISTORY_MAX;
-        }
-    }
-
-    void PruneClicks(int64_t nowMs) {
-        while (clickHistoryCount > 0) {
-            int64_t oldest = clickHistory[clickHistoryHead];
-            if (nowMs - oldest > cfg::CLICK_HISTORY_WINDOW_MS) {
-                clickHistoryHead = (clickHistoryHead + 1) % cfg::CLICK_HISTORY_MAX;
-                clickHistoryCount--;
-            } else {
-                break;
-            }
-        }
-    }
-
-    // Keep at most N clicks
-    void TrimClicks(int maxCount) {
-        while (clickHistoryCount > maxCount) {
-            clickHistoryHead = (clickHistoryHead + 1) % cfg::CLICK_HISTORY_MAX;
-            clickHistoryCount--;
-        }
-    }
 
     bool IsCrouching() const {
         return sysLCtrl || sysC;

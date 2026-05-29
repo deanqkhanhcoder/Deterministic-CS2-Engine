@@ -13,14 +13,9 @@ struct RuntimeConfig {
     int    quickTapMs        = 30;
     int    maxScaleMs        = 80;
     double crouchMult        = 0.75;
-    int    tapDelayMs        = 25;
-    int    sprayDelayMs      = 120;
-    int    burstThreshold    = 3;
-    int    spaceDelayMs      = 400;
     int    latencyMarginMs   = 6;
     int    minStopMs         = 4;
     int    lutMaxMs          = 350;
-    double subtickPaddingTicks = 0.0;
 
     // Walk Memory
     int    walkMemoryMs      = 130;
@@ -51,10 +46,6 @@ struct RuntimeConfig {
     // Watchdog
     int    watchdogIntervalMs= 10000;
     int    watchdogStuckMs   = 500;
-
-    // Click history
-    int    clickHistoryMax   = 8;
-    int    clickHistoryWindowMs = 500;
 
     // Conflict penalty
     double conflictIncrement = 0.3;

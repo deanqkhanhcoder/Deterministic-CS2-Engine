@@ -249,10 +249,6 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
                                   snap.activeBrakeProfileName, theme::CLR_MODE);
             py += rowH;
 
-            layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Sub-Tick Compression",
-                                  snap.subTickCompressionActive ? L"ACTIVE" : L"INACTIVE",
-                                  snap.subTickCompressionActive ? theme::CLR_ON : theme::FG_DIM);
-            py += rowH;
 
             wchar_t valW[64];
             swprintf_s(valW, L"%lld µs", snap.profileOverlapUs);

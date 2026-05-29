@@ -40,7 +40,7 @@ struct EngineStatePublication {
     bool phys[4];
     bool logical[4];
     bool bundleActive;
-    int64_t lastCounterMs;
+
 };
 constexpr size_t PUB_WORDS = (sizeof(EngineStatePublication) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
 alignas(64) static std::atomic<uint64_t> s_pubBuffer[PUB_WORDS];
@@ -62,7 +62,7 @@ void PublishEngineState() {
         pub.logical[i] = s_state.logical[i];
         pub.bundleActive = false;
     }
-    pub.lastCounterMs = s_state.lastCounterMs;
+
 
     uint32_t seq = s_pubSeq.load(std::memory_order_relaxed);
     s_pubSeq.store(seq + 1, std::memory_order_release);
@@ -301,7 +301,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
         out.logical[i] = pub.logical[i];
         out.bundleActive = pub.bundleActive;
     }
-    out.lastCounterMs = pub.lastCounterMs;
+
 
     out.bhopEnabled = rcfg::Get().bhopEnabled;
     out.bhopMode = bhop::GetMode();
@@ -316,7 +316,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     // Movement Telemetry
     const RuntimeConfig& cfg = rcfg::Get();
-    out.subTickCompressionActive = (cfg.brakeProfiles[cfg.activeBrakeProfileIndex].overlap_duration_us == 0);
+
     out.overlapAccuracyUs = 0; // Filled later from timerJitterUs
     switch(cfg.activeBrakeProfileIndex) {
         case 1: wcscpy_s(out.activeBrakeProfileName, L"RIFLE"); break;

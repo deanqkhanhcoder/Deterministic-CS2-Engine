@@ -15,7 +15,7 @@
 namespace engine {
 
 void ToggleSuspend() {
-    CancelPendingShot();
+
     InjectionBatch batch;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -37,7 +37,7 @@ void ToggleSuspend() {
 }
 
 void ClearHeldKeys() {
-    CancelPendingShot();
+
     InjectionBatch batch;
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -111,8 +111,7 @@ void RebuildState() {
 
 void ReconcileInternal(bool suspending, InjectionBatch& batch) {
     if (suspending) {
-        s_state.lastCounterMs = s_state.lastSpaceTimeMs = 0;
-        s_state.clickHistoryCount = s_state.clickHistoryHead = 0;
+
         s_state.axisState[0] = s_state.axisState[1] = AxisState::None;
     }
     for (int i = 0; i < 4; ++i) {

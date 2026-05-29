@@ -15,7 +15,7 @@
 namespace engine {
 
 void HandleKeyDown(Key k, bool routeSemantic) {
-    CancelPendingShot();
+
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
@@ -91,7 +91,7 @@ void HandleKeyDown(Key k, bool routeSemantic) {
 //  HANDLE KEY UP  (§16)
 // ════════════════════════════════════════════════════════════════
 void HandleKeyUp(Key k, bool routeSemantic) {
-    CancelPendingShot();
+
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
@@ -210,13 +210,13 @@ void OnShiftChange(bool down, bool routeSemantic) {
 }
 
 void OnSpaceDown(bool routeSemantic) {
-    CancelPendingShot();
+
     // PHYSICAL TRUTH
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_state.spacePhys = true;
         if (routeSemantic) {
-            s_state.lastSpaceTimeMs = timing::NowMs();
+            
         }
         PublishEngineState();
     }

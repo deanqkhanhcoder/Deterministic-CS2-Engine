@@ -196,10 +196,7 @@ void Paint(HDC hdc, RECT rc) {
         layout::DrawRow(hdc, px, py, pw, rowH, L"Max Scale", buf, theme::FG_VALUE); py += rowH;
         swprintf(buf, 64, L"%.2f", cfg.crouchMult);
         layout::DrawRow(hdc, px, py, pw, rowH, L"Crouch Multiplier", buf, theme::FG_VALUE); py += rowH;
-        swprintf(buf, 64, L"%d ms", cfg.tapDelayMs);
-        layout::DrawRow(hdc, px, py, pw, rowH, L"Tap Delay", buf, theme::FG_VALUE); py += rowH;
-        swprintf(buf, 64, L"%d ms", cfg.sprayDelayMs);
-        layout::DrawRow(hdc, px, py, pw, rowH, L"Spray Delay", buf, theme::FG_VALUE); py += rowH;
+
         swprintf(buf, 64, L"%d ms", cfg.minStopMs);
         layout::DrawRow(hdc, px, py, pw, rowH, L"Min Stop", buf, theme::FG_VALUE); py += rowH;
         swprintf(buf, 64, L"%d ms", cfg.walkMemoryMs);

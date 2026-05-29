@@ -250,10 +250,10 @@ static bool AirborneWait(const RuntimeConfig& cfg, HWND sequenceHwnd) {
         remaining -= chunk;
 
         // [BUG #5] Check active target focus to break out instantly if focus is lost
-        if (!s_spaceHeld.load() || capture::GetActiveWindowFast() != sequenceHwnd)
+        if (!s_spaceHeld.load() || s_waitingForSpaceRepress.load(std::memory_order_relaxed) || capture::GetActiveWindowFast() != sequenceHwnd)
             return false;
     }
-    return s_spaceHeld.load() && 
+    return s_spaceHeld.load() && !s_waitingForSpaceRepress.load(std::memory_order_relaxed) && 
            capture::GetActiveWindowFast() == sequenceHwnd;
 }
 
@@ -293,7 +293,7 @@ static void BhopThreadFunc() {
         s_jitterAccum = 0.0;
 
 
-        while (s_spaceHeld.load() && s_running.load()) {
+        while (s_spaceHeld.load() && s_running.load() && !s_waitingForSpaceRepress.load(std::memory_order_relaxed)) {
             // [BUG #BP-1] Passive target focus check inside loop
             if (capture::GetActiveWindowFast() != sequenceHwnd || capture::GetActiveWindowFast() != target_platform::GetCurrentIdentity().hwnd) {
                 DLOG_WARN(Runtime, "Bhop: Focus lost/changed during sequence. Aborting jump thread injection.");
@@ -400,9 +400,13 @@ void ToggleEnabled() {
     rcfg::Apply(cfg);
 
     if (!isNowEnabled) {
-        // Turning off: signal worker to stop current sequence
-        std::lock_guard<std::mutex> lock(s_mutex);
-        s_spaceHeld.store(false, std::memory_order_relaxed);
+        // Turning off: flag that we are waiting for repress to safely break the loop
+        s_waitingForSpaceRepress.store(true, std::memory_order_relaxed);
+    } else {
+        // If turning on while space is held, require a repress
+        if (s_spaceHeld.load(std::memory_order_relaxed)) {
+            s_waitingForSpaceRepress.store(true, std::memory_order_relaxed);
+        }
     }
     s_cv.notify_all();  // Wake worker to re-check predicate
     DLOG_WARN(Runtime, "Bhop %s", reinterpret_cast<int64_t>(isNowEnabled ? "ENABLED" : "DISABLED"));
@@ -419,22 +423,13 @@ void CycleMode() {
 }
 
 void OnSuspendChanged() {
-    if (true) {
-        if (engine::GetState().spacePhys) {
-            s_waitingForSpaceRepress.store(true, std::memory_order_relaxed);
-        } else {
-            s_waitingForSpaceRepress.store(false, std::memory_order_relaxed);
-        }
-    } else {
-        s_waitingForSpaceRepress.store(false, std::memory_order_relaxed);
-    }
+    s_waitingForSpaceRepress.store(engine::GetState().spacePhys, std::memory_order_relaxed);
     s_cv.notify_all(); // Wake worker to check engine::IsSuspended()
 }
 
 // ── Input signals (called from hook thread — returns instantly) ──
 
 void OnSpaceDown() {
-    if (!rcfg::Get().bhopEnabled) return;
     s_waitingForSpaceRepress.store(false, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(s_mutex);
