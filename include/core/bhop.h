@@ -45,5 +45,6 @@ void OnSuspendChanged();
 // ── Input signals (called from hook thread — returns immediately) ──
 void OnSpaceDown();   // Signal: physical Space pressed
 void OnSpaceUp();     // Signal: physical Space released
+void ForceSpaceSync(bool isPhysicallyHeld); // Force sync state bypassing constraints
 
 } // namespace bhop

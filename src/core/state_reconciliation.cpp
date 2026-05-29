@@ -48,6 +48,38 @@ void ClearHeldKeys() {
 }
 
 // Unified Focus Reconciliation
+static void ReconcileLogicalStateFromPhysical(InjectionBatch& batch) {
+    // 1. Re-sync Bhop if Space is physically held
+    bhop::ForceSpaceSync(s_state.spacePhys);
+
+    // 2. Re-sync WASD
+    for (int i = 0; i < 4; ++i) {
+        Key k = static_cast<Key>(i);
+        if (s_state.phys[i]) {
+            if (!s_state.logical[i]) {
+                if (s_state.walk.shiftDown) {
+                    s_state.walk.startTimeUs[i] = timing::NowUs();
+                }
+                s_state.logical[i] = true;
+                batch.push(k, true);
+            }
+        } else {
+            if (s_state.logical[i]) {
+                timing::CancelTimer(k);
+                s_state.expectedTimerId[i] = 0;
+                batch.push(k, false);
+                s_state.logical[i] = false;
+            }
+        }
+    }
+    
+    // Reset axis state and resolve to naturally apply logic
+    s_state.axisState[0] = AxisState::None;
+    s_state.axisState[1] = AxisState::None;
+    ResolveAxis(Axis::X, batch);
+    ResolveAxis(Axis::Y, batch);
+}
+
 void RebuildState() {
     DLOG_INFO(Runtime, "Rebuilding semantic state from physical truth...");
     
@@ -76,33 +108,8 @@ void RebuildState() {
         s_state.sysLCtrl = snapLCtrl;
         s_state.sysC = snapC;
         
-        // Re-sync Bhop if Space is physically held
-        if (s_state.spacePhys) {
-            bhop::OnSpaceDown();
-        } else {
-            bhop::OnSpaceUp();
-        }
-
-        // Re-sync WASD
-        for (int i = 0; i < 4; ++i) {
-            Key k = static_cast<Key>(i);
-            if (s_state.phys[i]) {
-                if (!s_state.logical[i]) {
-                    if (s_state.walk.shiftDown) s_state.walk.startTimeUs[i] = timing::NowUs();
-                    batch.push(k, true);
-                    s_state.logical[i] = true;
-                }
-            } else {
-                if (s_state.logical[i]) {
-                    timing::CancelTimer(k);
-                    s_state.expectedTimerId[i] = 0;
-                    batch.push(k, false);
-                    s_state.logical[i] = false;
-                }
-            }
-        }
-        ResolveAxis(Axis::X, batch);
-        ResolveAxis(Axis::Y, batch);
+        // Re-sync using the exact physical truth
+        ReconcileLogicalStateFromPhysical(batch);
         PublishEngineState();
     }
     batch.flush();

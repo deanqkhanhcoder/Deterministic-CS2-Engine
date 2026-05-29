@@ -459,4 +459,16 @@ void OnSpaceUp() {
     // Worker will see s_spaceHeld == false on next iteration
 }
 
+void ForceSpaceSync(bool isPhysicallyHeld) {
+    if (isPhysicallyHeld) {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_spaceHeld.store(true);
+    } else {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_spaceHeld.store(false);
+        s_waitingForSpaceRepress.store(false, std::memory_order_relaxed);
+    }
+    s_cv.notify_all();
+}
+
 } // namespace bhop
