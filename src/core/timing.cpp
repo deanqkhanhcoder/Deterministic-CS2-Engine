@@ -15,6 +15,7 @@
 #include "topology.h"
 #include "analysis_toolkit.h"
 #include <mutex>
+#include "state_engine.h"
 
 namespace timing {
 
@@ -299,10 +300,10 @@ static void TimerThreadFunc() {
             }
 #endif
 
-            // Post completion to main thread
-            DLOG_INFO(Timing, "TimerThreadFunc: Posting WM_TIMER_EXPIRED for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
-            PostMessage(s_targetHwnd, WM_TIMER_EXPIRED,
-                        (WPARAM)slot.key, (LPARAM)slot.id);
+            // Invoke directly instead of using PostMessage
+            int64_t postTimeUs = timing::NowUs();
+            DLOG_INFO(Timing, "TimerThreadFunc: Direct call OnTimerExpired for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
+            engine::OnTimerExpired(slot.key, slot.id);
         } else {
             lock.unlock();
         }

@@ -56,7 +56,6 @@ static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
 }
 
 
-#if MARCO_ENABLE_WATCHDOG
 // ── Globals ──
 static UINT_PTR g_watchdogTimerId = 0;
 
@@ -65,10 +64,11 @@ static void CALLBACK WatchdogTimerProc(HWND, UINT, UINT_PTR, DWORD) {
 #if MARCO_ENABLE_HEARTBEATS
     telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
 #endif
+#if MARCO_ENABLE_WATCHDOG
     engine::RunWatchdog();
+#endif
     capture::PollTarget();
 }
-#endif
 
 // ── Main window procedure for the hidden message window ──
 // This receives timer-thread messages and hotkey commands.
@@ -78,13 +78,6 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
 #endif
     switch (msg) {
-        case WM_TIMER_EXPIRED: {
-            Key k = static_cast<Key>((int)wParam);
-            uint64_t id = static_cast<uint64_t>(lParam);
-            engine::OnTimerExpired(k, id);
-            return 0;
-        }
-
         case WM_TOGGLE_SUSPEND: {
             engine::ToggleSuspend();
             if (engine::IsSuspended()) bhop::OnSpaceUp();
@@ -262,8 +255,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     engine::SetHookInstalled(true);
     DLOG_INFO(Runtime, "TRACE: engine::SetHookInstalled(true) OK");
 
-#if MARCO_ENABLE_WATCHDOG
     // ── Start watchdog timer ──
+#if MARCO_ENABLE_WATCHDOG
     g_watchdogTimerId = SetTimer(msgHwnd, 1, rcfg::Get().watchdogIntervalMs, WatchdogTimerProc);
     engine::StartWatchdog();
     DLOG_INFO(Runtime, "TRACE: Watchdog started OK");

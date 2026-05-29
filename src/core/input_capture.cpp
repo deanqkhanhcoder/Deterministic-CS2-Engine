@@ -458,6 +458,7 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, 
     if (event != EVENT_SYSTEM_FOREGROUND) return;
     
     s_activeHwnd.store(hwnd, std::memory_order_release);
+    IsTargetActive(); // Actively trigger focus loss/gain handlers
 }
 
 bool Install(HWND hwnd) {

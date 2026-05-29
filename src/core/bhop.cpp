@@ -151,22 +151,28 @@ static void PrecisionWait(double ms) {
 // ════════════════════════════════════════════════════════════════
 //  INPUT INJECTION (Space + WheelDown)
 // ════════════════════════════════════════════════════════════════
+static bool s_injectedSpaceState = false;
+
 static void InjectSpaceDown() {
+    if (s_injectedSpaceState) return;
     INPUT inp = {};
     inp.type = INPUT_KEYBOARD;
     inp.ki.wVk = VK_SPACE;
     inp.ki.wScan = 0x39;
     inp.ki.dwFlags = KEYEVENTF_SCANCODE;
     SendInput(1, &inp, sizeof(INPUT));
+    s_injectedSpaceState = true;
 }
 
 static void InjectSpaceUp() {
+    if (!s_injectedSpaceState) return;
     INPUT inp = {};
     inp.type = INPUT_KEYBOARD;
     inp.ki.wVk = VK_SPACE;
     inp.ki.wScan = 0x39;
     inp.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
     SendInput(1, &inp, sizeof(INPUT));
+    s_injectedSpaceState = false;
 }
 
 static void InjectWheelDown() {
@@ -399,13 +405,16 @@ void ToggleEnabled() {
     bool isNowEnabled = cfg.bhopEnabled;
     rcfg::Apply(cfg);
 
-    if (!isNowEnabled) {
-        // Turning off: flag that we are waiting for repress to safely break the loop
-        s_waitingForSpaceRepress.store(true, std::memory_order_relaxed);
-    } else {
-        // If turning on while space is held, require a repress
-        if (s_spaceHeld.load(std::memory_order_relaxed)) {
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        if (!isNowEnabled) {
+            // Turning off: flag that we are waiting for repress to safely break the loop
             s_waitingForSpaceRepress.store(true, std::memory_order_relaxed);
+        } else {
+            // If turning on while space is held, require a repress
+            if (s_spaceHeld.load(std::memory_order_relaxed)) {
+                s_waitingForSpaceRepress.store(true, std::memory_order_relaxed);
+            }
         }
     }
     s_cv.notify_all();  // Wake worker to re-check predicate
@@ -423,7 +432,10 @@ void CycleMode() {
 }
 
 void OnSuspendChanged() {
-    s_waitingForSpaceRepress.store(engine::GetState().spacePhys, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_waitingForSpaceRepress.store(engine::GetState().spacePhys, std::memory_order_relaxed);
+    }
     s_cv.notify_all(); // Wake worker to check engine::IsSuspended()
 }
 
