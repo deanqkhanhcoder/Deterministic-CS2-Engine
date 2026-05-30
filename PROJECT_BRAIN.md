@@ -642,6 +642,14 @@ However: **THIS IS NOT CERTIFIED.**
 Runtime gameplay validation remains ongoing. Current forensic infrastructure should remain. DO NOT remove yet. Reason: If bug returns, forensic evidence is still required.
 Current forensic system includes: ForensicRingBuffer, AutoFlush, Session Logs, Focus Events, Profile Events, Anomaly Events. This is acceptable during stabilization.
 
+## Observability Decision Record
+
+During V27.4 bug hunting (Focus Desync), a large amount of forensic infrastructure was added (ForensicRingBuffer, AutoFlush, Focus tracing, Anomaly events, BHOP_STALL, COUNTERSTRAFE_CONFLICT, LOGICAL_PHYSICAL_DIVERGENCE). This was necessary for stabilization but is NOT the long-term Release architecture.
+
+However, **Current State = Forensic Retained Intentionally**.
+Do NOT slimdown, remove, refactor, optimize, or clean up forensics yet. 
+Reason: The bug was just patched. We lack long-term gameplay evidence. If forensics are removed now and the bug returns, we lose all investigative data and must restart from zero. This is an unacceptable risk.
+
 ## Future V27.5 Plan
 
 Do NOT perform V27.5 cleanup yet.
@@ -649,14 +657,27 @@ First:
 * Play real matches.
 * Run long gameplay sessions (3–7 days of real gameplay, DM/MM sessions).
 * Observe stability with profile switching, focus switching, and long BHOP sessions.
+* Verify no Counter-Strafe bugs, no BHOP bugs, and no critical new anomalies.
 
-Only after confidence is high, create: **V27.5 Observability Slimdown**
+Only after confidence is high, begin the V27.5 Observability Slimdown.
 
-### V27.5 Observability Slimdown (Future Target Architecture)
+### Future V27.5 Observability Slimdown
+
+There are 3 tiers of observability planned:
+
+1. **Production Telemetry** (Allowed in Release):
+   * Startup crash, fatal crash, unexpected exception, focus lost/gained, profile changed, timer rejected.
+   * Ensures baseline data exists if a wild bug appears.
+2. **Debug Logging** (e.g., KeyDown, KeyUp, route=0/1):
+   * Should be disabled or heavily reduced in Release to prevent spam.
+3. **Developer Forensics** (e.g., BHOP_STALL, COUNTERSTRAFE_CONFLICT, LOGICAL_PHYSICAL_DIVERGENCE, deep traces):
+   * Bug hunting tooling. Do not enable permanently in Production.
+
+**Target Architecture When V27.5 Starts:**
 **Debug & Profile**: Full forensic ON
 **Release**: Minimal telemetry only. Keep: ERROR, WARN, CRASH, Startup crash, Fatal crash, Unexpected exception, Focus lost/gain, Profile changed.
 
-Move behind compile flag `#if MARCO_ENABLE_FORENSIC`:
+Move developer forensics behind compile flag `#if MARCO_ENABLE_FORENSIC`:
 * BHOP_STALL
 * COUNTERSTRAFE_CONFLICT
 * LOGICAL_PHYSICAL_DIVERGENCE
