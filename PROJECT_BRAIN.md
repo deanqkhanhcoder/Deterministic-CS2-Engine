@@ -684,6 +684,36 @@ Move developer forensics behind compile flag `#if MARCO_ENABLE_FORENSIC`:
 * Deep forensic traces
 * Internal anomaly spam
 
+## Release Roadmap
+
+Current:
+
+`v27.4.0-stable`
+
+Status:
+
+Stabilization Candidate
+
+Requirements before release:
+
+1. 3-7 days of real gameplay evidence.
+2. No recurrence of Counter-Strafe failure.
+3. No recurrence of BHOP failure.
+4. No recurrence of Focus Desync.
+
+Next milestone:
+
+V27.5 Observability Slimdown
+
+After gameplay stability is proven:
+
+- Release build should use minimal telemetry.
+- Debug and Profile builds should keep full forensic capability.
+- Reduce forensic noise.
+- Freeze the architecture.
+
+Do not call V27.4 a production release until the requirements above have runtime evidence.
+
 ## Rules For Future AI Agents
 
 1. Never patch gameplay without evidence from logs, forensics, reproduction, or a clearly proven source bug.
@@ -742,4 +772,3 @@ Latest documented sanitation pass verification:
 - `git diff --check`: executed, exit 0 after elevated read access, line-ending warnings only.
 
 This file creation itself is documentation-only. It does not imply gameplay validation.
-
