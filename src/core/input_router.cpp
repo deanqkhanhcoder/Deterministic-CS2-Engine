@@ -1,4 +1,4 @@
-#include "engine_internal.h"
+﻿#include "engine_internal.h"
 #include "movement_reconstruction.h"
 #include "runtime_config.h"
 #include "bhop.h"
@@ -21,7 +21,7 @@ void HandleKeyDown(Key k, bool routeSemantic) {
         int64_t startUs;
         Key k;
         ~ScopedTrace() {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             if (telemetry::IsEnabled()) {
                 telemetry::g_eventBuffer.Push(4, 0, (int32_t)(timing::NowUs() - startUs), (int32_t)k, 1); // Op = 1 (KeyDown)
             }
@@ -87,9 +87,9 @@ void HandleKeyDown(Key k, bool routeSemantic) {
     _doNotify = true;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  HANDLE KEY UP  (§16)
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  HANDLE KEY UP  (Â§16)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 void HandleKeyUp(Key k, bool routeSemantic) {
 
     int64_t startUs = timing::NowUs();
@@ -97,7 +97,7 @@ void HandleKeyUp(Key k, bool routeSemantic) {
         int64_t startUs;
         Key k;
         ~ScopedTrace() {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             if (telemetry::IsEnabled()) {
                 telemetry::g_eventBuffer.Push(4, 0, (int32_t)(timing::NowUs() - startUs), (int32_t)k, 0); // Op = 0 (KeyUp)
             }
@@ -166,7 +166,7 @@ void HandleKeyUp(Key k, bool routeSemantic) {
     _doNotify = true;
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  RESOLVE AXIS
 void OnSysKeyChange(bool isLCtrl, bool down, bool routeSemantic) {
     // PHYSICAL TRUTH

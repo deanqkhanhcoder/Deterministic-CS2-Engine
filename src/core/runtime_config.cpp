@@ -1,7 +1,7 @@
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  CS2 Macro Suite — Runtime Configuration Implementation             ║
-// ║  Seqlock pattern: true lock-free concurrent reads, safe atomic sync ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+// â•‘  CS2 Macro Suite â€” Runtime Configuration Implementation             â•‘
+// â•‘  Seqlock pattern: true lock-free concurrent reads, safe atomic sync â•‘
+// â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 #include "runtime_config.h"
 #include <thread>
@@ -9,6 +9,8 @@
 #include <cmath>
 #include <immintrin.h>
 #include "movement_reconstruction.h"
+#include "telemetry.h"
+#include "timing.h"
 
 namespace rcfg {
 
@@ -229,6 +231,13 @@ void Apply(const RuntimeConfig& newCfg) {
 
     // 3. Regenerate offline physics LUTs based on new config parameters
     movement::InitLUT();
+
+#if MARCO_ENABLE_FORENSIC
+    telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::PROFILE_CHANGED, GetCurrentThreadId(), timing::NowUs(),
+        (int32_t)validated.activeBrakeProfileIndex, (uint32_t)validated.bhopMode, (uint32_t)validated.bhopEnabled, true };
+    telemetry::g_forensicBuffer.Push(ev);
+    telemetry::FlushForensicLog();
+#endif
 }
 
 RuntimeConfig& GetMutable() {

@@ -32,7 +32,8 @@ bool OnLButtonDown() {
                     if (brakeUs > 0) {
                         batch.push(counterKey, true);
                         s_state.logical[ki_c] = true;
-                        timing::ScheduleTimerUs(counterKey, brakeUs);
+                        uint64_t timerId = timing::ScheduleTimerUs(counterKey, brakeUs);
+                        s_state.expectedTimerId[ki_c] = timerId;
                     }
                 }
             }

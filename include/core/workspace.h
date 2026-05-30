@@ -10,13 +10,34 @@ namespace workspace {
 std::wstring GetProjectRootW();
 std::string GetProjectRootA();
 
-// Returns the normalized workspace log root for the current build flavor.
-// e.g. "C:\Path\To\marco\logs\debug\"
+// Returns canonical runtime roots. Trailing backslash is guaranteed.
+std::wstring GetRuntimeRootW();
+std::string GetRuntimeRootA();
+
+std::wstring GetBinRootW();
+std::string GetBinRootA();
+
+std::wstring GetArtifactRootW();
+std::string GetArtifactRootA();
+
+std::wstring GetCaptureRootW();
+std::string GetCaptureRootA();
+
+std::wstring GetCrashRootW();
+std::string GetCrashRootA();
+
+// Returns the normalized runtime log root.
+// e.g. "C:\Path\To\marco\runtime\logs\"
 // Trailing backslash is guaranteed.
 std::wstring GetLogRootW();
 std::string GetLogRootA();
 
-// Recursively creates the directory structure for the current log root.
+// Recursively creates canonical runtime directory structures.
+void EnsureRuntimeDirectoriesExist();
+void EnsureBinDirectoryExists();
+void EnsureArtifactDirectoryExists();
+void EnsureCaptureDirectoryExists();
+void EnsureCrashDirectoryExists();
 void EnsureLogDirectoryExists();
 
 } // namespace workspace

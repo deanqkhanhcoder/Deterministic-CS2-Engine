@@ -21,11 +21,19 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
     InjectionBatch batch;
     
+#if MARCO_ENABLE_FORENSIC
+    telemetry::g_timersExecuted.fetch_add(1, std::memory_order_relaxed);
+#endif
+
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (expectedTimerId != 0 && s_state.expectedTimerId[ki_k] != expectedTimerId) {
             DLOG_TRACE(Runtime, "OnTimerExpired: Ignoring stale callback for %s (expected=%llu, actual=%llu)",
                        reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), s_state.expectedTimerId[ki_k], expectedTimerId);
+#if MARCO_ENABLE_FORENSIC
+            telemetry::ForensicEvent evRej = { telemetry::ForensicTrapType::TIMER_REJECTED, GetCurrentThreadId(), timing::NowUs(), (int32_t)ki_k, (uint32_t)(expectedTimerId & 0xFFFFFFFF), (uint32_t)(s_state.expectedTimerId[ki_k] & 0xFFFFFFFF), false };
+            telemetry::g_forensicBuffer.Push(evRej);
+#endif
             return;
         }
         
@@ -66,6 +74,6 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
     _doNotify = true;
 }
 
-// ── SYSTEM KEY HANDLERS ──
+// â”€â”€ SYSTEM KEY HANDLERS â”€â”€
 
 } // namespace engine

@@ -33,8 +33,9 @@ def send_mouse(down=True):
     ctypes.windll.user32.SendInput(1, ctypes.byref(x), ctypes.sizeof(x))
 
 def main():
-    if os.path.exists('marco_debug.log'):
-        os.remove('marco_debug.log')
+    log_path = os.path.join('runtime', 'logs', 'marco_debug.log')
+    if os.path.exists(log_path):
+        os.remove(log_path)
         
     print("Starting marco_debug.exe for STRESS TEST...")
     proc = subprocess.Popen(["runtime/bin/marco_debug.exe"])

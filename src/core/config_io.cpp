@@ -5,6 +5,7 @@
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 #include "config_io.h"
+#include "workspace.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -16,11 +17,10 @@ static wchar_t s_iniPath[MAX_PATH] = {};
 
 static void EnsurePath() {
     if (s_iniPath[0]) return;
-    GetModuleFileNameW(nullptr, s_iniPath, MAX_PATH);
-    // Replace .exe with .ini
-    wchar_t* dot = wcsrchr(s_iniPath, L'.');
-    if (dot) wcscpy(dot, L".ini");
-    else wcscat(s_iniPath, L".ini");
+    workspace::EnsureBinDirectoryExists();
+    std::wstring path = workspace::GetBinRootW() + L"marco.ini";
+    wcsncpy(s_iniPath, path.c_str(), MAX_PATH - 1);
+    s_iniPath[MAX_PATH - 1] = L'\0';
 }
 
 const wchar_t* GetConfigPath() {

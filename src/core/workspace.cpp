@@ -13,6 +13,31 @@ static std::wstring ToLower(const std::wstring& s) {
     return out;
 }
 
+static bool PathExists(const std::wstring& path) {
+    return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+static bool DirectoryExists(const std::wstring& path) {
+    DWORD attrs = GetFileAttributesW(path.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static std::wstring ParentDirectory(std::wstring dir) {
+    if (dir.empty()) return dir;
+    std::replace(dir.begin(), dir.end(), L'/', L'\\');
+    while (!dir.empty() && dir.back() == L'\\') {
+        dir.pop_back();
+    }
+    size_t slash = dir.find_last_of(L'\\');
+    if (slash == std::wstring::npos) return L"";
+    return dir.substr(0, slash + 1);
+}
+
+static bool HasProjectRootMarkers(const std::wstring& dir) {
+    return PathExists(dir + L"PROJECT_BRAIN.md") ||
+           (PathExists(dir + L"Makefile") && DirectoryExists(dir + L"src"));
+}
+
 std::wstring GetProjectRootW() {
     wchar_t path[MAX_PATH];
     if (!GetModuleFileNameW(nullptr, path, MAX_PATH)) {
@@ -22,10 +47,29 @@ std::wstring GetProjectRootW() {
     std::wstring fullPath(path);
     // Normalize slashes
     std::replace(fullPath.begin(), fullPath.end(), L'/', L'\\');
-    
+
+    size_t lastSlash = fullPath.rfind(L'\\');
+    std::wstring exeDir = (lastSlash != std::wstring::npos)
+        ? fullPath.substr(0, lastSlash + 1)
+        : L".\\";
+
+    std::wstring probe = exeDir;
+    for (int i = 0; i < 8 && !probe.empty(); ++i) {
+        if (HasProjectRootMarkers(probe)) {
+            return probe;
+        }
+        probe = ParentDirectory(probe);
+    }
+
     std::wstring lowerPath = ToLower(fullPath);
-    
-    // Look for \bin\ or \build\ boundaries to step back to the true workspace root
+
+    // Runtime builds live under <project-root>\runtime\bin\.
+    size_t runtimeBinPos = lowerPath.rfind(L"\\runtime\\bin\\");
+    if (runtimeBinPos != std::wstring::npos) {
+        return fullPath.substr(0, runtimeBinPos + 1); // keep trailing slash
+    }
+
+    // Look for \bin\ or \build\ boundaries to step back to the true workspace root.
     size_t binPos = lowerPath.rfind(L"\\bin\\");
     if (binPos != std::wstring::npos) {
         return fullPath.substr(0, binPos + 1); // keep trailing slash
@@ -36,13 +80,7 @@ std::wstring GetProjectRootW() {
         return fullPath.substr(0, buildPos + 1); // keep trailing slash
     }
 
-    // Fallback: Just return the directory containing the executable
-    size_t lastSlash = fullPath.rfind(L'\\');
-    if (lastSlash != std::wstring::npos) {
-        return fullPath.substr(0, lastSlash + 1);
-    }
-
-    return L".\\";
+    return exeDir;
 }
 
 std::string GetProjectRootA() {
@@ -57,12 +95,52 @@ std::string GetProjectRootA() {
     return out;
 }
 
+std::wstring GetRuntimeRootW() {
+    return GetProjectRootW() + L"runtime\\";
+}
+
+std::string GetRuntimeRootA() {
+    return GetProjectRootA() + "runtime\\";
+}
+
+std::wstring GetBinRootW() {
+    return GetRuntimeRootW() + L"bin\\";
+}
+
+std::string GetBinRootA() {
+    return GetRuntimeRootA() + "bin\\";
+}
+
+std::wstring GetArtifactRootW() {
+    return GetRuntimeRootW() + L"artifacts\\";
+}
+
+std::string GetArtifactRootA() {
+    return GetRuntimeRootA() + "artifacts\\";
+}
+
+std::wstring GetCaptureRootW() {
+    return GetRuntimeRootW() + L"captures\\";
+}
+
+std::string GetCaptureRootA() {
+    return GetRuntimeRootA() + "captures\\";
+}
+
+std::wstring GetCrashRootW() {
+    return GetRuntimeRootW() + L"crash\\";
+}
+
+std::string GetCrashRootA() {
+    return GetRuntimeRootA() + "crash\\";
+}
+
 std::wstring GetLogRootW() {
-    return GetProjectRootW() + L"logs\\";
+    return GetRuntimeRootW() + L"logs\\";
 }
 
 std::string GetLogRootA() {
-    return GetProjectRootA() + "logs\\";
+    return GetRuntimeRootA() + "logs\\";
 }
 
 static void CreateDirectoryRecursiveW(const std::wstring& path) {
@@ -76,6 +154,31 @@ static void CreateDirectoryRecursiveW(const std::wstring& path) {
 
 void EnsureLogDirectoryExists() {
     CreateDirectoryRecursiveW(GetLogRootW());
+}
+
+void EnsureBinDirectoryExists() {
+    CreateDirectoryRecursiveW(GetBinRootW());
+}
+
+void EnsureArtifactDirectoryExists() {
+    CreateDirectoryRecursiveW(GetArtifactRootW());
+}
+
+void EnsureCaptureDirectoryExists() {
+    CreateDirectoryRecursiveW(GetCaptureRootW());
+}
+
+void EnsureCrashDirectoryExists() {
+    CreateDirectoryRecursiveW(GetCrashRootW());
+}
+
+void EnsureRuntimeDirectoriesExist() {
+    CreateDirectoryRecursiveW(GetRuntimeRootW());
+    EnsureBinDirectoryExists();
+    EnsureLogDirectoryExists();
+    EnsureArtifactDirectoryExists();
+    EnsureCaptureDirectoryExists();
+    EnsureCrashDirectoryExists();
 }
 
 } // namespace workspace

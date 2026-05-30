@@ -1,8 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include "build_config.h"
 
-#if MARCO_DEBUG_FORENSIC
+#if MARCO_ENABLE_FORENSIC
 
 #include <cstdint>
 

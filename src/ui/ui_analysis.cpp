@@ -244,6 +244,7 @@ static void PaintMetricsPanel(HDC hdc, RECT panelRect, int rowH) {
 
 // Returns total content height (for scroll calculation)
 static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, const RuntimeSnapshot& snap) {
+    (void)snap;
     PaintPanelFrame(hdc, panelRect, L"\x25C8  FORENSIC DIAGNOSTICS");
 
     // Inner content area (below header, inside panel)

@@ -1,5 +1,6 @@
 # Build Artifacts
 build/
+build/obj/
 obj/
 .agent/
 *.exe
@@ -12,6 +13,8 @@ obj/
 runtime/logs/
 runtime/captures/
 runtime/artifacts/
+runtime/crash/
+runtime/bin/
 *.log
 *.csv
 *.png

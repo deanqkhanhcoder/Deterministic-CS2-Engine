@@ -89,8 +89,10 @@ static void SaveScreenshot(const char* filepath) {
 }
 
 static void WriteFreezeLog(uint64_t hbUs, uint64_t nowUs) {
-    workspace::EnsureLogDirectoryExists();
-    std::string root = workspace::GetLogRootA();
+    workspace::EnsureRuntimeDirectoriesExist();
+    std::string logRoot = workspace::GetLogRootA();
+    std::string captureRoot = workspace::GetCaptureRootA();
+    std::string crashRoot = workspace::GetCrashRootA();
 
     char buf[2048];
     sprintf(buf, 
@@ -126,7 +128,7 @@ static void WriteFreezeLog(uint64_t hbUs, uint64_t nowUs) {
     OutputDebugStringA(buf);
 
     // 3. File Logging
-    std::string logPath = root + "ui_watchdog.log";
+    std::string logPath = logRoot + "ui_watchdog.log";
     FILE* f = fopen(logPath.c_str(), "ab");
     if (f) {
         fwrite(buf, 1, strlen(buf), f);
@@ -135,11 +137,11 @@ static void WriteFreezeLog(uint64_t hbUs, uint64_t nowUs) {
     }
 
     // 4. Screenshot Capture
-    std::string bmpPath = root + "freeze_capture.bmp";
+    std::string bmpPath = captureRoot + "freeze_capture.bmp";
     SaveScreenshot(bmpPath.c_str());
 
     // 5. Minidump Generation
-    std::string dmpPath = root + "ui_freeze.dmp";
+    std::string dmpPath = crashRoot + "ui_freeze.dmp";
     HANDLE hFile = CreateFileA(dmpPath.c_str(), GENERIC_READ | GENERIC_WRITE, 
         0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile != INVALID_HANDLE_VALUE) {

@@ -1,4 +1,5 @@
 import re
+import sys
 
 def analyze_trace(filepath):
     events = {} # gen -> { vk: ..., isDown: ..., state_before: ..., state_after: ..., toggle_failed: ... }
@@ -42,4 +43,4 @@ def analyze_trace(filepath):
     print(f"Total stuck states detected: {stuck_count}")
 
 if __name__ == "__main__":
-    analyze_trace('trace_output_utf8.txt')
+    analyze_trace(sys.argv[1] if len(sys.argv) > 1 else 'runtime/artifacts/trace_output_utf8.txt')

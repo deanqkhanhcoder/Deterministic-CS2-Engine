@@ -1,8 +1,8 @@
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  CS2 Bhop Engine — Native C++ Port of cs2_bhop_v2.ahk              ║
-// ║  Worker thread architecture: hook signals → cv wakeup → bhop loop   ║
-// ║  Exact behavioral match to AHK logic (minus F4 reload)              ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+// â•‘  CS2 Bhop Engine â€” Native C++ Port of cs2_bhop_v2.ahk              â•‘
+// â•‘  Worker thread architecture: hook signals â†’ cv wakeup â†’ bhop loop   â•‘
+// â•‘  Exact behavioral match to AHK logic (minus F4 reload)              â•‘
+// â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 #include "bhop.h"
 #include "runtime_config.h"
@@ -18,20 +18,21 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <atomic>
 #include <immintrin.h>
 #include "topology.h"
+#include "telemetry.h"
+#include "timing.h"
 
 namespace bhop {
 
-// ════════════════════════════════════════════════════════════════
-//  CONFIGURATION — reads from RuntimeConfig at runtime
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  CONFIGURATION â€” reads from RuntimeConfig at runtime
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // [FIX #23] No more compile-time presets. All values come from rcfg::Get().
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  MODULE STATE
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Shared between hook thread (signal) and worker thread (execution)
 static std::atomic<bool> s_spaceHeld{false};   // Physical Space key state
 static std::atomic<bool> s_running{false};      // Thread lifecycle flag
@@ -50,7 +51,7 @@ static std::thread             s_workerThread;
 static std::mutex              s_mutex;
 static std::condition_variable s_cv;
 
-// ── Name tables ──
+// â”€â”€ Name tables â”€â”€
 static const char* s_modeNames[] = {
     "", "LEGIT", "AGGRESSIVE", "HUMANIZED", "SCROLL_EMU"
 };
@@ -58,15 +59,15 @@ static const char* s_stateNames[] = {
     "IDLE", "JUMP_START", "AIRBORNE", "LANDING"
 };
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  NtDelayExecution (loaded dynamically)
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 typedef LONG (NTAPI *NtDelayExecutionFn)(BOOLEAN Alertable, PLARGE_INTEGER DelayInterval);
 static NtDelayExecutionFn s_ntDelay = nullptr;
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  MATH UTILITIES
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static constexpr double PI = 3.14159265358979323846;
 
 static double RandF(double lo, double hi) {
@@ -92,19 +93,28 @@ static double GaussianRandom(double mean, double stddev) {
     return Clamp(mean + stddev * z, mean - 3.0 * stddev, mean + 3.0 * stddev);
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  QPC HELPERS
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static int64_t QpcNow() {
     LARGE_INTEGER cnt;
     QueryPerformanceCounter(&cnt);
     return cnt.QuadPart;
 }
 
-// ════════════════════════════════════════════════════════════════
+static int64_t StallThresholdTicks(const RuntimeConfig& cfg) {
+    int modeIdx = cfg.bhopMode;
+    if (modeIdx < 1 || modeIdx > 4) modeIdx = 4;
+    const auto& mt = cfg.modeCfg[modeIdx];
+    int expectedMs = cfg.airborneLockMs + cfg.landingScanMs + mt.hMax + mt.dMax + cfg.spamIntervalMs + 250;
+    int thresholdMs = std::max(2000, expectedMs);
+    return (int64_t)((double)thresholdMs / s_qpcToMs);
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  PRECISION WAIT (3-phase: NtDelay + QPC spin + jitter comp)
-//  Runs on worker thread — safe to block for any duration.
-// ════════════════════════════════════════════════════════════════
+//  Runs on worker thread â€” safe to block for any duration.
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static void PrecisionWait(double ms) {
     // [CHAOS PROTECTION] NaN detection and timing parameter bounds protection
     if (std::isnan(ms)) ms = 0.0;
@@ -148,9 +158,9 @@ static void PrecisionWait(double ms) {
     s_jitterAccum = s_jitterAccum * 0.6 + jitter * 0.4;
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  INPUT INJECTION (Space + WheelDown)
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static bool s_injectedSpaceState = false;
 
 static void InjectSpaceDown() {
@@ -183,9 +193,9 @@ static void InjectWheelDown() {
     SendInput(1, &inp, sizeof(INPUT));
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  SCROLL BURST (Mode 4)
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static void ScrollBurst(const RuntimeConfig& cfg, HWND sequenceHwnd) {
     InjectWheelDown();
     PrecisionWait(cfg.spamIntervalMs);
@@ -193,9 +203,9 @@ static void ScrollBurst(const RuntimeConfig& cfg, HWND sequenceHwnd) {
     InjectWheelDown();
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  DISPATCH JUMP
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static void DispatchJump(const RuntimeConfig& cfg, HWND sequenceHwnd, int& seqCount) {
     // [BUG #4] Receive snapshot of RuntimeConfig to guarantee timing/generation consistency
     int modeIdx = cfg.bhopMode;
@@ -244,10 +254,10 @@ static void DispatchJump(const RuntimeConfig& cfg, HWND sequenceHwnd, int& seqCo
     seqCount++;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  AIRBORNE WAIT — checks s_spaceHeld periodically
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  AIRBORNE WAIT â€” checks s_spaceHeld periodically
 //  Returns false if Space was released (should exit loop).
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static bool AirborneWait(const RuntimeConfig& cfg, HWND sequenceHwnd) {
     int remaining = cfg.airborneLockMs;
     while (remaining > 0 && s_running.load()) {
@@ -263,19 +273,19 @@ static bool AirborneWait(const RuntimeConfig& cfg, HWND sequenceHwnd) {
            capture::GetActiveWindowFast() == sequenceHwnd;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  WORKER THREAD — bhop state machine loop
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  WORKER THREAD â€” bhop state machine loop
 //  Sleeps on CV when idle, wakes on Space press, runs bhop loop,
 //  then goes back to sleep. Never touches the hook thread.
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static void BhopThreadFunc() {
-    // [FIX ID 14] Seed RNG on this thread — rand() uses TLS on MSVC
+    // [FIX ID 14] Seed RNG on this thread â€” rand() uses TLS on MSVC
     srand((unsigned)QpcNow());
 
     topology::PinCriticalThread(L"Pro Audio");
 
     while (true) {
-        // ── Sleep until Space is pressed ──
+        // â”€â”€ Sleep until Space is pressed â”€â”€
         {
             std::unique_lock<std::mutex> lock(s_mutex);
             s_cv.wait(lock, [] {
@@ -292,36 +302,76 @@ static void BhopThreadFunc() {
 
         DLOG_INFO(Runtime, "Bhop: sequence start");
 
-        // ── Bhop state machine loop ──
+        // â”€â”€ Bhop state machine loop â”€â”€
         int seqCount = 0;
         int64_t landingScanStartTick = 0;
+        int64_t lastProgressTick = QpcNow();
         s_state.store(State::JumpStart, std::memory_order_relaxed);  // [FIX R-6] Atomic store
         s_jitterAccum = 0.0;
 
 
         while (s_spaceHeld.load() && s_running.load() && !s_waitingForSpaceRepress.load(std::memory_order_relaxed)) {
             // [BUG #BP-1] Passive target focus check inside loop
-            if (capture::GetActiveWindowFast() != sequenceHwnd || capture::GetActiveWindowFast() != target_platform::GetCurrentIdentity().hwnd) {
+            HWND activeWindow = capture::GetActiveWindowFast();
+            HWND currentTarget = target_platform::GetCurrentIdentity().hwnd;
+            if (activeWindow != sequenceHwnd || activeWindow != currentTarget) {
                 DLOG_WARN(Runtime, "Bhop: Focus lost/changed during sequence. Aborting jump thread injection.");
                 s_spaceHeld.store(false, std::memory_order_relaxed);
-
+#if MARCO_ENABLE_FORENSIC
+                telemetry::ForensicEvent ev;
+                ev.type = telemetry::ForensicTrapType::BHOP_ABORTED;
+                ev.threadId = GetCurrentThreadId();
+                ev.timestampUs = timing::NowUs();
+                ev.reasonCode = 1;
+                ev.extraData1 = s_spaceHeld.load();
+                ev.extraData2 = s_injectedSpaceState;
+                ev.focus = false;
+                telemetry::g_forensicBuffer.Push(ev);
+#endif
                 break;
             }
 
+#if MARCO_ENABLE_FORENSIC
+            int64_t nowTick = QpcNow();
+            if (nowTick - lastProgressTick > StallThresholdTicks(jumpCfg)) {
+                telemetry::ForensicEvent ev;
+                ev.type = telemetry::ForensicTrapType::BHOP_STALL;
+                ev.threadId = GetCurrentThreadId();
+                ev.timestampUs = timing::NowUs();
+                ev.reasonCode = (int32_t)s_state.load(std::memory_order_relaxed);
+                ev.extraData1 = s_spaceHeld.load();
+                ev.extraData2 = s_injectedSpaceState;
+                ev.focus = true;
+                telemetry::g_forensicBuffer.Push(ev);
+                lastProgressTick = nowTick;
+            }
+#endif
+
             switch (s_state) {
                 case State::JumpStart:
+                {
+                    int beforeSeq = seqCount;
                     DispatchJump(jumpCfg, sequenceHwnd, seqCount);
+                    if (seqCount != beforeSeq) {
+                        lastProgressTick = QpcNow();
+                    }
                     s_state.store(State::AirborneLock, std::memory_order_relaxed);  // [FIX R-6] Atomic store
                     break;
+                }
 
                 case State::AirborneLock:
                     if (!AirborneWait(jumpCfg, sequenceHwnd)) goto done;
+                    lastProgressTick = QpcNow();
                     s_state.store(State::LandingScan, std::memory_order_relaxed);  // [FIX R-6] Atomic store
                     landingScanStartTick = QpcNow();
                     break;
 
                 case State::LandingScan: {
+                    int beforeSeq = seqCount;
                     DispatchJump(jumpCfg, sequenceHwnd, seqCount);
+                    if (seqCount != beforeSeq) {
+                        lastProgressTick = QpcNow();
+                    }
                     
                     double landingDuration = (double)jumpCfg.landingScanMs;
 
@@ -329,6 +379,7 @@ static void BhopThreadFunc() {
                     double elapsedMs = (double)(nowTick - landingScanStartTick) * 1000.0 / (double)s_qpcFreq;
                     if (elapsedMs >= landingDuration) {
                         s_state.store(State::AirborneLock, std::memory_order_relaxed);
+                        lastProgressTick = nowTick;
                         seqCount = 0; // Reset seq for the new jump rhythm
                     }
                     break;
@@ -342,7 +393,7 @@ static void BhopThreadFunc() {
     done:
         // [FIX BUG #1] Always release synthetic space to prevent stuck keys.
         // If focus was lost, the injection goes to whatever window is now
-        // foreground — harmless since space-up is idempotent. A stuck
+        // foreground â€” harmless since space-up is idempotent. A stuck
         // synthetic space-down in the game is far worse than an extra
         // space-up to a non-game window.
         InjectSpaceUp();
@@ -351,9 +402,9 @@ static void BhopThreadFunc() {
     }
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  PUBLIC API
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static std::atomic<bool> s_initialized{false};
 
 void Init() {
@@ -439,7 +490,7 @@ void OnSuspendChanged() {
     s_cv.notify_all(); // Wake worker to check engine::IsSuspended()
 }
 
-// ── Input signals (called from hook thread — returns instantly) ──
+// â”€â”€ Input signals (called from hook thread â€” returns instantly) â”€â”€
 
 void OnSpaceDown() {
     s_waitingForSpaceRepress.store(false, std::memory_order_relaxed);

@@ -1,6 +1,6 @@
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  Counter-Strafe v25.3 C++ — Timing Engine Implementation            ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+// â•‘  Counter-Strafe v25.3 C++ â€” Timing Engine Implementation            â•‘
+// â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 #include "timing.h"
 #include "debug_logger.h"
@@ -19,7 +19,7 @@
 
 namespace timing {
 
-// ── QPC state ──
+// â”€â”€ QPC state â”€â”€
 static int64_t s_qpcFreq = 0;
 
 void Init() {
@@ -59,7 +59,7 @@ int64_t NowMs() {
            ((cnt.QuadPart % freq) * 1000LL) / freq;
 }
 
-// ── Timer Thread Implementation ──
+// â”€â”€ Timer Thread Implementation â”€â”€
 
 struct alignas(64) TimerSlot {
     bool        active    = false;
@@ -94,7 +94,7 @@ static void UpdateAdaptiveController(int64_t oversleepUs) {
     s_varOversleepUs = s_varOversleepUs * 0.9 + (diff * diff) * 0.1;
 
     uint32_t mode = telemetry::g_affinityMode.load(std::memory_order_relaxed);
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
     static uint32_t lastMode = 0xFFFFFFFF;
     if (mode != lastMode) {
         lastMode = mode;
@@ -124,7 +124,7 @@ static void UpdateAdaptiveController(int64_t oversleepUs) {
 
     s_adaptiveSpinTailUs.store(spinTail, std::memory_order_relaxed);
     s_adaptiveWakeMarginUs.store(wakeMargin, std::memory_order_relaxed);
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
     telemetry::g_wakeVarianceUs.store((int64_t)s_varOversleepUs, std::memory_order_relaxed);
 #endif
 }
@@ -148,7 +148,7 @@ static void TimerThreadFunc() {
         (void)procNumber;
         uint32_t prevCore = telemetry::g_activeTimingCore.exchange(procNumber, std::memory_order_relaxed);
         telemetry::g_activeTimingGroup.store(0, std::memory_order_relaxed);
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
         if (prevCore != 0xFFFFFFFF && prevCore != procNumber) {
             telemetry::g_coreMigrations.fetch_add(1, std::memory_order_relaxed);
             telemetry::g_eventBuffer.Push(5, procNumber, 3, (int32_t)prevCore); // EVENT_CORE_MIGRATION = 3
@@ -172,7 +172,7 @@ static void TimerThreadFunc() {
         if (!s_running) break;
 
         if (nearestIdx < 0) {
-            // No active timers — wait for signal with timeout (250ms) to maintain heartbeat/core telemetry
+            // No active timers â€” wait for signal with timeout (250ms) to maintain heartbeat/core telemetry
             // Only mark blocked if we are actually waiting
 #if MARCO_ENABLE_HEARTBEATS
             telemetry::g_blockedTiming.store(true, std::memory_order_relaxed);
@@ -274,7 +274,7 @@ static void TimerThreadFunc() {
             (void)jitter;
             int64_t oversleep = std::max(0LL, actualWakeUs - slot.expireUs);
 
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             telemetry::g_timerJitter.Add(jitter);
             telemetry::g_oversleep.Add(oversleep);
             telemetry::g_spinDuration.Add(actualWakeUs - spinStartUs);
@@ -294,7 +294,7 @@ static void TimerThreadFunc() {
             // Update adaptive precision controller
             UpdateAdaptiveController(oversleep);
 
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             if (telemetry::IsEnabled()) {
                 telemetry::g_eventBuffer.Push(3, currentCore, (int32_t)jitter, (int32_t)(actualWakeUs - spinStartUs), (int32_t)slot.key);
             }
@@ -302,6 +302,7 @@ static void TimerThreadFunc() {
 
             // Invoke directly instead of using PostMessage
             int64_t postTimeUs = timing::NowUs();
+            (void)postTimeUs;
             DLOG_INFO(Timing, "TimerThreadFunc: Direct call OnTimerExpired for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
             engine::OnTimerExpired(slot.key, slot.id);
         } else {
@@ -369,6 +370,10 @@ uint64_t ScheduleTimerUs(Key key, int64_t durationUs) {
     }
     s_dirty.store(true, std::memory_order_relaxed);
     
+#if MARCO_ENABLE_FORENSIC
+    telemetry::g_timersCreated.fetch_add(1, std::memory_order_relaxed);
+#endif
+
     if (wakeRequired && s_cv_event) {
         SetEvent(s_cv_event);
     }
@@ -382,7 +387,12 @@ uint64_t ScheduleTimer(Key key, int durationMs) {
 
 void CancelTimer(Key key) {
     std::unique_lock<std::mutex> lock(s_spinlock);
-    s_slots[ki(key)].active = false;
+    if (s_slots[ki(key)].active) {
+        s_slots[ki(key)].active = false;
+#if MARCO_ENABLE_FORENSIC
+        telemetry::g_timersCancelled.fetch_add(1, std::memory_order_relaxed);
+#endif
+    }
     uint8_t mask = s_activeMask.load(std::memory_order_relaxed);
     mask &= ~(1 << ki(key));
     s_activeMask.store(mask, std::memory_order_relaxed);

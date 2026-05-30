@@ -322,10 +322,11 @@ void ProcessScannerWorker() {
 #if MARCO_ENABLE_WATCHDOG
         telemetry::g_blockedScanner.store(true, std::memory_order_relaxed);
 #endif
-        for (int i = 0; i < 20; ++i) {
-            if (!s_resolverRunning.load(std::memory_order_relaxed)) break;
-            Sleep(100);
-        }
+        std::unique_lock<std::mutex> lock(s_resolverMutex);
+        s_resolverCv.wait_for(lock, std::chrono::milliseconds(2000), [] {
+            return !s_resolverRunning.load(std::memory_order_relaxed);
+        });
+        if (!s_resolverRunning.load(std::memory_order_relaxed)) break;
 #if MARCO_ENABLE_WATCHDOG
         telemetry::g_blockedScanner.store(false, std::memory_order_relaxed);
         telemetry::g_heartbeatScanner.store(timing::NowMs(), std::memory_order_relaxed);

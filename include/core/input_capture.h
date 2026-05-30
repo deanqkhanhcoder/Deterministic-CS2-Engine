@@ -21,7 +21,7 @@ bool IsTargetActiveForUI();
 
 bool IsHookInstalled();
 
-// Fast lock-free retrieval of the active foreground window
+// Samples the foreground window and refreshes the shared foreground cache.
 HWND GetActiveWindowFast();
 
 void PollTarget();

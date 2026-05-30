@@ -207,7 +207,7 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     vx *= efficiency;
     vy *= efficiency;
     
-    // ── True Velocity Capping (Walk/Crouch) ──
+    // â”€â”€ True Velocity Capping (Walk/Crouch) â”€â”€
     double maxSpeed = 250.0;
     if (s_state.IsCrouching()) {
         maxSpeed = 250.0 * 0.34; // 85.0
@@ -275,15 +275,27 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
     int ki_c = ki(counterKey);
     if (s_state.phys[ki_c]) {
         DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: %s phys held", reinterpret_cast<int64_t>(keymap::KeyName[ki_c]));
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CANCELLED, GetCurrentThreadId(), timing::NowUs(), 1 /*OppositePhys*/, (uint32_t)ki_c, (uint32_t)heldUs, true };
+        telemetry::g_forensicBuffer.Push(ev);
+#endif
         return false;
     }
     if (s_state.axisState[ai(ax)] == AxisState::Conflict) {
         DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: Axis %d in Conflict", ai(ax));
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CONFLICT, GetCurrentThreadId(), timing::NowUs(), 2 /*Conflict*/, (uint32_t)ai(ax), (uint32_t)heldUs, true };
+        telemetry::g_forensicBuffer.Push(ev);
+#endif
         return false;
     }
     const RuntimeConfig& rc = rcfg::Get();
     if (heldUs < rc.minTapUs) {
         DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: tap too short (%lld < %d)", heldUs, rc.minTapUs);
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CANCELLED, GetCurrentThreadId(), timing::NowUs(), 3 /*TooShort*/, (uint32_t)heldUs, (uint32_t)rc.minTapUs, true };
+        telemetry::g_forensicBuffer.Push(ev);
+#endif
         return false;
     }
 

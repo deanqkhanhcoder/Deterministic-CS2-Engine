@@ -1,12 +1,13 @@
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  CS2 Macro Suite — Main Entry Point                                 ║
-// ║  Full native desktop application lifecycle                          ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+// â•‘  CS2 Macro Suite â€” Main Entry Point                                 â•‘
+// â•‘  Full native desktop application lifecycle                          â•‘
+// â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 #include <windows.h>
 #include <mmsystem.h>
 #include <cstdio>
 #include <thread>
+#include <ctime>
 
 #include "build_config.h"
 #include "config.h"
@@ -29,7 +30,7 @@
 #include "topology.h"
 #include "etw_controller.h"
 
-// ── Crash Resilience & Startup Forensics ──
+// â”€â”€ Crash Resilience & Startup Forensics â”€â”€
 static const char* g_startupPhase = "INIT";
 #define SAFE_STARTUP_TRACE(phase) do { g_startupPhase = phase; DLOG_INFO(Startup, "Startup Phase: %s", reinterpret_cast<int64_t>(phase)); } while(0)
 
@@ -41,10 +42,13 @@ static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
         
         // Unhook instantly to prevent system-wide stuck keys
         capture::Uninstall();
+#if MARCO_ENABLE_FORENSIC
+        telemetry::FlushForensicLog();
+#endif
         timeEndPeriod(1);
 
-        workspace::EnsureLogDirectoryExists();
-        std::string crashLog = workspace::GetLogRootA() + "startup_crash.log";
+        workspace::EnsureCrashDirectoryExists();
+        std::string crashLog = workspace::GetCrashRootA() + "startup_crash.log";
         FILE* f = fopen(crashLog.c_str(), "w");
         if (f) {
             fprintf(f, "CRITICAL FAULT: 0x%08lX\n", code);
@@ -57,6 +61,7 @@ static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
 
 
 // ── Globals ──
+#if MARCO_ENABLE_WATCHDOG
 static UINT_PTR g_watchdogTimerId = 0;
 
 // ── Watchdog timer callback ──
@@ -64,11 +69,10 @@ static void CALLBACK WatchdogTimerProc(HWND, UINT, UINT_PTR, DWORD) {
 #if MARCO_ENABLE_HEARTBEATS
     telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
 #endif
-#if MARCO_ENABLE_WATCHDOG
     engine::RunWatchdog();
-#endif
     capture::PollTarget();
 }
+#endif
 
 // ── Main window procedure for the hidden message window ──
 // This receives timer-thread messages and hotkey commands.
@@ -139,25 +143,25 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  ENTRY POINT
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 typedef LONG (WINAPI *NTSETTIMERRESOLUTION)(ULONG, BOOLEAN, PULONG);
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
-    // ── Crash handler ──
+    // â”€â”€ Crash handler â”€â”€
     AddVectoredExceptionHandler(1, CrashVectoredExceptionHandler);
     SAFE_STARTUP_TRACE("MUTEX_CHECK");
 
-    // ── Prevent multiple instances ──
+    // â”€â”€ Prevent multiple instances â”€â”€
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"CS2MacroSuite_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"CS2 Macro Suite is already running.", L"Error", MB_ICONERROR);
         return 1;
     }
 
-    // ── System setup ──
+    // â”€â”€ System setup â”€â”€
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     if (ntdll) {
         auto NtSetTimerResolution = reinterpret_cast<NTSETTIMERRESOLUTION>(reinterpret_cast<void*>(GetProcAddress(ntdll, "NtSetTimerResolution")));
@@ -174,13 +178,25 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 
     SAFE_STARTUP_TRACE("SUBSYSTEM_INIT");
-    // ── Initialize subsystems ──
+    // â”€â”€ Initialize subsystems â”€â”€
     dlog::Init();
     timing::Init();
     rcfg::Init();
     target_platform::Init();
     telemetry::Init();
     telemetry::StartTelemetryThread();
+
+    workspace::EnsureRuntimeDirectoriesExist();
+    std::string logDir = workspace::GetLogRootA();
+    std::time_t t = std::time(nullptr);
+    std::tm tm = *std::localtime(&t);
+    char timeBuf[64];
+    std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d_%H-%M-%S", &tm);
+    std::string forensicLogPath = logDir + "marco_" + timeBuf + ".log";
+#if MARCO_ENABLE_FORENSIC
+    telemetry::InitForensics(forensicLogPath);
+#endif
+    DLOG_INFO(Startup, "Forensic log path: %s", reinterpret_cast<int64_t>(forensicLogPath.c_str()));
     analysis::Init();
     topology::Init();
     topology::PinHookThread(L"Games");
@@ -200,7 +216,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     bhop::Init();
 
     SAFE_STARTUP_TRACE("WINDOW_CREATION");
-    // ── Create hidden message window (timer/hook messages) ──
+    // â”€â”€ Create hidden message window (timer/hook messages) â”€â”€
     WNDCLASSEXW wc = {};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = MsgWndProc;
@@ -219,14 +235,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         return 1;
     }
 
-    // ── Init state engine ──
+    // â”€â”€ Init state engine â”€â”€
     engine::Init(msgHwnd);
 
-    // ── Start timer thread ──
+    // â”€â”€ Start timer thread â”€â”€
     timing::StartTimerThread(msgHwnd);
 
 #if MARCO_ENABLE_UI
-    // ── Create UI window ──
+    // â”€â”€ Create UI window â”€â”€
     HWND uiHwnd = ui::Create(hInst, msgHwnd);
     if (!uiHwnd) {
         MessageBoxW(nullptr, L"Failed to create UI window.", L"Error", MB_ICONERROR);
@@ -239,7 +255,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 #endif
 
     SAFE_STARTUP_TRACE("HOOK_INSTALL");
-    // ── Install hooks ──
+    // â”€â”€ Install hooks â”€â”€
     if (!capture::Install(msgHwnd)) {
         MessageBoxW(nullptr, L"Failed to install input hooks.\nRun as Administrator?",
                     L"Error", MB_ICONERROR);
@@ -255,7 +271,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     engine::SetHookInstalled(true);
     DLOG_INFO(Runtime, "TRACE: engine::SetHookInstalled(true) OK");
 
-    // ── Start watchdog timer ──
+    // â”€â”€ Start watchdog timer â”€â”€
 #if MARCO_ENABLE_WATCHDOG
     g_watchdogTimerId = SetTimer(msgHwnd, 1, rcfg::Get().watchdogIntervalMs, WatchdogTimerProc);
     engine::StartWatchdog();
@@ -263,7 +279,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 #endif
 
 #if MARCO_ENABLE_ETW
-    // ── Start Kernel ETW Tracing ──
+    // â”€â”€ Start Kernel ETW Tracing â”€â”€
     etw::StartGlobalTrace();
     DLOG_INFO(Runtime, "TRACE: etw::StartGlobalTrace OK");
 #endif
@@ -273,9 +289,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 
 
 
-    // ════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     //  MESSAGE LOOP (serves both hidden msg window and UI window)
-    // ════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 #if MARCO_ENABLE_DIAGNOSTICS
     ui_diagnostics::StartWatchdog();
 #endif
@@ -328,9 +344,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     ui_diagnostics::StopWatchdog();
 #endif
 
-    // ════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     //  CLEANUP
-    // ════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     DLOG_INFO(Shutdown, "Shutting down...");
 #if MARCO_ENABLE_WATCHDOG
     engine::StopWatchdog();
@@ -346,8 +362,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     bhop::Shutdown();
     timing::StopTimerThread();
     target_platform::Shutdown();
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
     telemetry::StopTelemetryThread();
+    telemetry::ShutdownForensics();
     telemetry::Shutdown();
 #endif
 #if MARCO_ENABLE_ETW

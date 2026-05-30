@@ -1,5 +1,6 @@
 #include "telemetry.h"
 #include "analysis_toolkit.h"
+#include "workspace.h"
 #include <windows.h>
 #include <thread>
 #include <algorithm>
@@ -21,8 +22,208 @@ TRACELOGGING_DEFINE_PROVIDER(
 #include "build_config.h"
 
 namespace telemetry {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
 EventRingBuffer g_eventBuffer;
+ForensicRingBuffer g_forensicBuffer;
+
+std::atomic<uint64_t> g_timersCreated{0};
+std::atomic<uint64_t> g_timersExecuted{0};
+std::atomic<uint64_t> g_timersCancelled{0};
+
+#include <stdio.h>
+#include <time.h>
+#include <string>
+
+static const char* ForensicTrapName(ForensicTrapType type) {
+    switch (type) {
+        case ForensicTrapType::FOCUS_LOST: return "FOCUS_LOST";
+        case ForensicTrapType::FOCUS_GAINED: return "FOCUS_GAINED";
+        case ForensicTrapType::PROFILE_CHANGED: return "PROFILE_CHANGED";
+        case ForensicTrapType::COUNTERSTRAFE_CANCELLED: return "COUNTERSTRAFE_CANCELLED";
+        case ForensicTrapType::COUNTERSTRAFE_CONFLICT: return "COUNTERSTRAFE_CONFLICT";
+        case ForensicTrapType::BHOP_ABORTED: return "BHOP_ABORTED";
+        case ForensicTrapType::BHOP_STALL: return "BHOP_STALL";
+        case ForensicTrapType::TIMER_REJECTED: return "TIMER_REJECTED";
+        case ForensicTrapType::LOGICAL_PHYSICAL_DIVERGENCE: return "LOGICAL_PHYSICAL_DIVERGENCE";
+        default: return "UNKNOWN";
+    }
+}
+
+static const char* BuildTypeName() {
+#if defined(MARCO_RELEASE)
+    return "Release";
+#elif defined(MARCO_PROFILE)
+    return "Profile";
+#else
+    return "Debug";
+#endif
+}
+
+static std::string MakeDefaultForensicLogPath() {
+    workspace::EnsureLogDirectoryExists();
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char name[96];
+    snprintf(name, sizeof(name), "marco_%04u-%02u-%02u_%02u-%02u-%02u.log",
+             (unsigned)st.wYear,
+             (unsigned)st.wMonth,
+             (unsigned)st.wDay,
+             (unsigned)st.wHour,
+             (unsigned)st.wMinute,
+             (unsigned)st.wSecond);
+
+    return workspace::GetLogRootA() + name;
+}
+
+void ForensicRingBuffer::FlushToFile(const char* filepath) {
+    if (!filepath || filepath[0] == '\0') return;
+
+    FILE* f = fopen(filepath, "a");
+    if (!f) return;
+
+    bool locked = false;
+    for (int attempt = 0; attempt < 100000; ++attempt) {
+        if (!lock.test_and_set(std::memory_order_acquire)) {
+            locked = true;
+            break;
+        }
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+        _mm_pause();
+#endif
+    }
+
+    if (!locked) {
+        fprintf(f, "--- FORENSIC FLUSH SKIPPED: ring buffer lock busy ---\n");
+        fclose(f);
+        return;
+    }
+
+    size_t currHead = head;
+    size_t start = flushed;
+    if (currHead - start > SIZE) {
+        start = currHead - SIZE;
+    }
+
+    if (start == currHead) {
+        lock.clear(std::memory_order_release);
+        fclose(f);
+        return;
+    }
+
+    fprintf(f, "--- FORENSIC FLUSH tick_ms=%llu events=%llu dropped_before=%llu ---\n",
+            (unsigned long long)GetTickCount64(),
+            (unsigned long long)(currHead - start),
+            (unsigned long long)(start - flushed));
+
+    uint64_t created = g_timersCreated.load();
+    uint64_t executed = g_timersExecuted.load();
+    uint64_t cancelled = g_timersCancelled.load();
+    fprintf(f, "TIMER_COUNTERS created=%llu executed=%llu cancelled=%llu derived_active=%llu\n",
+            (unsigned long long)created, (unsigned long long)executed, (unsigned long long)cancelled,
+            (unsigned long long)(created - executed - cancelled));
+
+    for (size_t i = start; i < currHead; i++) {
+        const auto& ev = buffer[i & MASK];
+        fprintf(f, "event=%s type=%u tid=%lu time_us=%lld reason=%d data1=%lu data2=%lu focus=%d\n",
+            ForensicTrapName(ev.type),
+            (unsigned int)ev.type,
+            (unsigned long)ev.threadId,
+            (long long)ev.timestampUs,
+            ev.reasonCode,
+            (unsigned long)ev.extraData1,
+            (unsigned long)ev.extraData2,
+            ev.focus ? 1 : 0);
+    }
+
+    flushed = currHead;
+    lock.clear(std::memory_order_release);
+
+    fprintf(f, "--- END FLUSH ---\n\n");
+    fclose(f);
+}
+
+static std::string s_forensicLogPath;
+static std::thread s_forensicThread;
+static std::atomic<bool> s_forensicRunning{false};
+
+static LONG WINAPI ForensicExceptionFilter(EXCEPTION_POINTERS* ep) {
+    (void)ep;
+    FlushForensicLog();
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void InitForensics(std::string path) {
+    if (path.empty()) {
+        path = MakeDefaultForensicLogPath();
+    }
+    s_forensicLogPath = path;
+    workspace::EnsureLogDirectoryExists();
+
+    FILE* f = fopen(path.c_str(), "w");
+    if (f) {
+        char exePath[MAX_PATH];
+        GetModuleFileNameA(NULL, exePath, MAX_PATH);
+        char cwd[MAX_PATH];
+        GetCurrentDirectoryA(MAX_PATH, cwd);
+
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+
+        fprintf(f, "=== FORENSIC SESSION HEADER ===\n");
+        fprintf(f, "Version: v27.4.0-stable\n");
+        fprintf(f, "Build: %s\n", BuildTypeName());
+        fprintf(f, "BuildDate: %s %s\n", __DATE__, __TIME__);
+        fprintf(f, "SessionStartLocal: %04u-%02u-%02u %02u:%02u:%02u\n",
+                (unsigned)st.wYear,
+                (unsigned)st.wMonth,
+                (unsigned)st.wDay,
+                (unsigned)st.wHour,
+                (unsigned)st.wMinute,
+                (unsigned)st.wSecond);
+        fprintf(f, "TickMs: %llu\n", (unsigned long long)GetTickCount64());
+        fprintf(f, "PID: %lu\n", GetCurrentProcessId());
+        fprintf(f, "CWD: %s\n", cwd);
+        fprintf(f, "EXE path: %s\n", exePath);
+        fprintf(f, "LogPath: %s\n", path.c_str());
+        fprintf(f, "Scope: anomaly events only; raw input is not logged\n");
+        fprintf(f, "AutoFlush: 1000 ms plus explicit focus/profile/shutdown/crash flush\n");
+        fprintf(f, "===============================\n\n");
+        fclose(f);
+    }
+
+    SetUnhandledExceptionFilter(ForensicExceptionFilter);
+
+    s_forensicRunning.store(true);
+    s_forensicThread = std::thread([]() {
+        while(s_forensicRunning.load()) {
+            Sleep(1000);
+            FlushForensicLog();
+        }
+    });
+}
+
+void ShutdownForensics() {
+    s_forensicRunning.store(false);
+    if (s_forensicThread.joinable()) {
+        s_forensicThread.join();
+    }
+    FlushForensicLog();
+}
+
+void FlushForensicLog() {
+    if (s_forensicLogPath.empty()) {
+        s_forensicLogPath = MakeDefaultForensicLogPath();
+    }
+    g_forensicBuffer.FlushToFile(s_forensicLogPath.c_str());
+}
+
+const std::string& GetForensicLogPath() {
+    if (s_forensicLogPath.empty()) {
+        s_forensicLogPath = MakeDefaultForensicLogPath();
+    }
+    return s_forensicLogPath;
+}
 
 static std::thread s_telemetryThread;
 static std::atomic<bool> s_telemetryRunning{false};
@@ -70,7 +271,7 @@ alignas(64) std::atomic<uint32_t> g_coreMigrations{0};
 alignas(64) std::atomic<int64_t> g_timerOversleepPeak{0};
 alignas(64) std::atomic<int64_t> g_wakeVarianceUs{0};
 
-#endif // MARCO_ENABLE_TELEMETRY
+#endif // MARCO_ENABLE_FORENSIC
 
 alignas(64) std::atomic<uint32_t> g_activeTimingGroup{0xFFFFFFFF};
 alignas(64) std::atomic<uint32_t> g_activeTimingCore{0xFFFFFFFF};

@@ -107,10 +107,26 @@ void RebuildState() {
         s_state.walk.shiftDown = snapLShift;
         s_state.sysLCtrl = snapLCtrl;
         s_state.sysC = snapC;
-        
+
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent evBefore = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0,
+            (uint32_t)(s_state.phys[0] | (s_state.phys[1] << 1) | (s_state.phys[2] << 2) | (s_state.phys[3] << 3)),
+            (uint32_t)(s_state.logical[0] | (s_state.logical[1] << 1) | (s_state.logical[2] << 2) | (s_state.logical[3] << 3)),
+            true };
+        telemetry::g_forensicBuffer.Push(evBefore);
+#endif
+
         // Re-sync using the exact physical truth
         ReconcileLogicalStateFromPhysical(batch);
         PublishEngineState();
+
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent evAfter = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0,
+            (uint32_t)(s_state.phys[0] | (s_state.phys[1] << 1) | (s_state.phys[2] << 2) | (s_state.phys[3] << 3)),
+            (uint32_t)(s_state.logical[0] | (s_state.logical[1] << 1) | (s_state.logical[2] << 2) | (s_state.logical[3] << 3)),
+            true };
+        telemetry::g_forensicBuffer.Push(evAfter);
+#endif
     }
     batch.flush();
     NotifyUI();

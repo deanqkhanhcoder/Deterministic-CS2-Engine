@@ -135,7 +135,7 @@ void InitLUT() {
             }
         }
     }
-    DLOG_INFO(Runtime, "movement::InitLUT() built 2D Matrix.");
+    // DLOG_INFO(Runtime, "movement::InitLUT() built 2D Matrix.");
 }
 
 void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int signY, const RuntimeConfig& rc, double& outVx, double& outVy) {

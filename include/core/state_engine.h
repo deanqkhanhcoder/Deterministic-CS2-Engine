@@ -5,6 +5,7 @@
 
 #include "types.h"
 #include "state.h"
+#include "build_config.h"
 #include <atomic>
 
 struct RuntimeSnapshot;  // forward decl
@@ -45,10 +46,12 @@ void RebuildState();
 void OnTimerExpired(Key k, uint64_t timerId);
 
 // ── Watchdog ──
+#if MARCO_ENABLE_WATCHDOG
 void RunWatchdog();
 void StartWatchdog();
 void StopWatchdog();
 void TriggerEmergencyFlush();
+#endif
 
 // ── Suspend/Resume ──
 void ToggleSuspend();

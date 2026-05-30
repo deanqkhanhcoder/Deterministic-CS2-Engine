@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <atomic>
 #include <algorithm>
+#include <string>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
 
 #ifdef _MSC_VER
 #include <TraceLoggingProvider.h>
@@ -118,6 +122,52 @@ public:
     }
 };
 
+enum class ForensicTrapType : uint8_t {
+    FOCUS_LOST = 1,
+    FOCUS_GAINED = 2,
+    PROFILE_CHANGED = 3,
+    COUNTERSTRAFE_CANCELLED = 4,
+    COUNTERSTRAFE_CONFLICT = 5,
+    BHOP_ABORTED = 6,
+    BHOP_STALL = 7,
+    TIMER_REJECTED = 8,
+    LOGICAL_PHYSICAL_DIVERGENCE = 9
+};
+
+struct ForensicEvent {
+    ForensicTrapType type;
+    uint32_t threadId;
+    int64_t timestampUs;
+    int32_t reasonCode; // generic
+    uint32_t extraData1; // phys state bitmask or axis or whatever
+    uint32_t extraData2; // logical state bitmask or oppositePhys
+    bool focus;
+};
+
+class ForensicRingBuffer {
+    static constexpr size_t SIZE = 65536;
+    static constexpr size_t MASK = SIZE - 1;
+    ForensicEvent buffer[SIZE];
+    alignas(64) size_t head = 0;
+    alignas(64) size_t flushed = 0;
+    alignas(64) std::atomic_flag lock = ATOMIC_FLAG_INIT;
+public:
+    void Push(const ForensicEvent& ev) {
+        while (lock.test_and_set(std::memory_order_acquire)) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+            _mm_pause();
+#endif
+        }
+        buffer[head & MASK] = ev;
+        head++;
+        if (head - flushed > SIZE) {
+            flushed = head - SIZE;
+        }
+        lock.clear(std::memory_order_release);
+    }
+    void FlushToFile(const char* filepath);
+};
+
 #include "build_config.h"
 
 // Core Affinity tracking is now unconditional for Dashboard UI
@@ -126,8 +176,18 @@ alignas(64) extern std::atomic<uint32_t> g_activeTimingCore;
 alignas(64) extern std::atomic<uint32_t> g_activeHookGroup;
 alignas(64) extern std::atomic<uint32_t> g_activeHookCore;
 
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
 extern EventRingBuffer g_eventBuffer;
+extern ForensicRingBuffer g_forensicBuffer;
+
+void InitForensics(std::string path);
+void ShutdownForensics();
+void FlushForensicLog();
+const std::string& GetForensicLogPath();
+
+extern std::atomic<uint64_t> g_timersCreated;
+extern std::atomic<uint64_t> g_timersExecuted;
+extern std::atomic<uint64_t> g_timersCancelled;
 
 // Global telemetry buffers & status flags
 alignas(64) extern MetricBuffer g_hookLatency;
@@ -141,7 +201,7 @@ alignas(64) extern std::atomic<uint32_t> g_coreMigrations;
 alignas(64) extern std::atomic<int64_t> g_timerOversleepPeak;
 alignas(64) extern std::atomic<int64_t> g_wakeVarianceUs;
 
-#endif // MARCO_ENABLE_TELEMETRY
+#endif // MARCO_ENABLE_FORENSIC
 
 #if MARCO_ENABLE_HEARTBEATS
 alignas(64) extern std::atomic<int64_t> g_heartbeatTiming;
@@ -161,7 +221,7 @@ alignas(64) extern std::atomic<uint32_t> g_recoveryCount;
 
 alignas(64) extern std::atomic<uint32_t> g_affinityMode;
 
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
 void StartTelemetryThread();
 void StopTelemetryThread();
 #else

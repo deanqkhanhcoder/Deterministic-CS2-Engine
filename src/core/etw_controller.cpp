@@ -32,8 +32,8 @@ bool StartGlobalTrace() {
 
     // NT Kernel Logger is the ONLY session that can capture CSwitch and DPCs
     session.sessionName = KERNEL_LOGGER_NAMEW;
-    workspace::EnsureLogDirectoryExists();
-    session.logFilePath = workspace::GetLogRootW() + KERNEL_TRACE_FILE;
+    workspace::EnsureArtifactDirectoryExists();
+    session.logFilePath = workspace::GetArtifactRootW() + KERNEL_TRACE_FILE;
 
     ULONG bufferSize = sizeof(EVENT_TRACE_PROPERTIES) + 
                        (session.sessionName.length() + 1) * sizeof(wchar_t) + 

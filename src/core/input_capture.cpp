@@ -1,7 +1,7 @@
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  Counter-Strafe v25.3 C++ — Input Capture Implementation            ║
-// ║  Redesigned for Always-Track Physical Layer & Async Resolver        ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+// â•‘  Counter-Strafe v25.3 C++ â€” Input Capture Implementation            â•‘
+// â•‘  Redesigned for Always-Track Physical Layer & Async Resolver        â•‘
+// â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 #include "input_capture.h"
 #include "state_engine.h"
@@ -44,18 +44,25 @@ static bool s_hkDownF1 = false;
 static bool s_hkDownF2 = false;
 static bool s_hkDownF3 = false;
 static bool s_hkDownF6 = false;
-static bool s_hkDownF8 = false;
+
+static HWND SampleForegroundWindow() {
+    HWND fg = GetForegroundWindow();
+    if (fg) {
+        s_activeHwnd.store(fg, std::memory_order_release);
+        return fg;
+    }
+    return s_activeHwnd.load(std::memory_order_acquire);
+}
 
 void PollTarget() {
-    HWND fg = s_activeHwnd.load(std::memory_order_acquire);
-    if (fg) {
-        auto id = target_platform::TargetIdentity::FromWindow(fg);
-        target_platform::ResolveTargetAsync(id);
-    }
+    HWND fg = SampleForegroundWindow();
+    if (!fg) return;
+    auto id = target_platform::TargetIdentity::FromWindow(fg);
+    target_platform::ResolveTargetAsync(id);
 }
 
 bool IsTargetActiveForUI() {
-    HWND fg = s_activeHwnd.load(std::memory_order_acquire);
+    HWND fg = SampleForegroundWindow();
     if (!fg) return false;
     auto resolvedId = target_platform::GetCurrentIdentity();
     return (fg == resolvedId.hwnd && resolvedId.IsValid());
@@ -81,7 +88,7 @@ static std::mutex s_focusMutex;
 
 static bool IsTargetActive() {
     std::lock_guard<std::mutex> lock(s_focusMutex);
-    HWND fg = s_activeHwnd.load(std::memory_order_acquire);
+    HWND fg = SampleForegroundWindow();
     if (!fg) return false;
 
     static HWND s_lastEvaluatedFg = nullptr;
@@ -96,6 +103,10 @@ static bool IsTargetActive() {
         if (!isActive) {
             target_platform::ResolveTargetAsync(currentId);
         }
+    } else if (!isActive) {
+        target_platform::TargetIdentity currentId = target_platform::TargetIdentity::FromWindow(fg);
+        s_cachedIdentity = currentId;
+        target_platform::ResolveTargetAsync(currentId);
     }
 
     auto currentId = s_cachedIdentity;
@@ -105,6 +116,11 @@ static bool IsTargetActive() {
     if (s_wasTargetActive && !isActive) {
         s_wasTargetActive = isActive;
         DLOG_WARN(Hook, "Target focus LOST [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, false };
+        telemetry::g_forensicBuffer.Push(ev);
+        telemetry::FlushForensicLog();
+#endif
         engine::ClearHeldKeys();
         bhop::OnSpaceUp();
         s_spaceSwallowed = false; // Explicit swallow release
@@ -112,10 +128,15 @@ static bool IsTargetActive() {
             s_wasdSwallowed[i] = false;
         }
         s_physSpaceDown = false;
-        s_hkDownF1 = s_hkDownF2 = s_hkDownF3 = s_hkDownF6 = s_hkDownF8 = false; // Clear global hotkey states on focus loss
+        s_hkDownF1 = s_hkDownF2 = s_hkDownF3 = s_hkDownF6 = false; // Clear global hotkey states on focus loss
     } else if (!s_wasTargetActive && isActive) {
         s_wasTargetActive = isActive;
         DLOG_WARN(Hook, "Target focus REGAINED [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
+#if MARCO_ENABLE_FORENSIC
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, true };
+        telemetry::g_forensicBuffer.Push(ev);
+        telemetry::FlushForensicLog();
+#endif
         
         // Sync local space state with actual hardware truth
         s_physSpaceDown = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
@@ -123,7 +144,6 @@ static bool IsTargetActive() {
         s_hkDownF2 = (GetAsyncKeyState(VK_F2) & 0x8000) != 0;
         s_hkDownF3 = (GetAsyncKeyState(VK_F3) & 0x8000) != 0;
         s_hkDownF6 = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
-        s_hkDownF8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
         
         engine::RebuildState();
 
@@ -155,12 +175,12 @@ static int ScanToKeyIndex(DWORD scanCode) {
     }
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  KEYBOARD HOOK CALLBACK
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     int64_t hookStartUs = timing::NowUs();
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
     engine::dbgLastHookUs.store(hookStartUs, std::memory_order_relaxed);
     engine::dbgEventSeq.fetch_add(1, std::memory_order_relaxed);
 #endif
@@ -171,7 +191,8 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 #endif
     uint32_t procNumber = GetCurrentProcessorNumber();
     uint32_t prevCore = telemetry::g_activeHookCore.exchange(procNumber, std::memory_order_relaxed);
-#if MARCO_ENABLE_TELEMETRY
+    (void)prevCore;
+#if MARCO_ENABLE_FORENSIC
     if (prevCore != 0xFFFFFFFF && prevCore != procNumber) {
         telemetry::g_coreMigrations.fetch_add(1, std::memory_order_relaxed);
         telemetry::g_eventBuffer.Push(5, procNumber, 3, (int32_t)prevCore); // EVENT_CORE_MIGRATION = 3
@@ -189,7 +210,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         WPARAM action;
         uint32_t coreId;
         ~ScopedTrace() {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             int64_t durUs = timing::NowUs() - startUs;
             telemetry::g_hookLatency.Add(durUs);
             telemetry::g_eventBuffer.Push(5, coreId, 0, (int32_t)durUs); // EVENT_HOOK_KEYBOARD = 0
@@ -281,21 +302,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         }
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
-    if (vk == VK_F8) {
-        static int64_t s_hkLastDownF8 = 0;
-        int64_t now = timing::NowUs();
-        bool isAutoRepeat = s_hkDownF8 && (now - s_hkLastDownF8 < 500000);
-        if (isDown) {
-            s_hkLastDownF8 = now;
-            if (!isAutoRepeat) {
-                s_hkDownF8 = true;
-                SendNotifyMessageW(s_hwnd, WM_CLOSE, 0, 0);
-            }
-        } else if (isUp) {
-            s_hkDownF8 = false;
-        }
-        return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
-    }
+
 
     // --- 2. ALWAYS-TRACK PHYSICAL LAYER ---
     // [FIX Bug #1] Track edges BEFORE any routing or focus exits.
@@ -385,12 +392,12 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  MOUSE HOOK CALLBACK
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     int64_t hookStartUs = timing::NowUs();
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
     engine::dbgLastHookUs.store(hookStartUs, std::memory_order_relaxed);
     engine::dbgEventSeq.fetch_add(1, std::memory_order_relaxed);
 #endif
@@ -401,7 +408,8 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 #endif
     uint32_t procNumber = GetCurrentProcessorNumber();
     uint32_t prevCore = telemetry::g_activeHookCore.exchange(procNumber, std::memory_order_relaxed);
-#if MARCO_ENABLE_TELEMETRY
+    (void)prevCore;
+#if MARCO_ENABLE_FORENSIC
     if (prevCore != 0xFFFFFFFF && prevCore != procNumber) {
         telemetry::g_coreMigrations.fetch_add(1, std::memory_order_relaxed);
         telemetry::g_eventBuffer.Push(5, procNumber, 3, (int32_t)prevCore); // EVENT_CORE_MIGRATION = 3
@@ -423,7 +431,7 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         WPARAM action;
         uint32_t coreId;
         ~ScopedTrace() {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             int64_t durUs = timing::NowUs() - startUs;
             telemetry::g_hookLatency.Add(durUs);
             telemetry::g_eventBuffer.Push(5, coreId, 1, (int32_t)durUs); // EVENT_HOOK_MOUSE = 1
@@ -446,9 +454,9 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  INSTALL / UNINSTALL
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime) {
     (void)hWinEventHook;
     (void)idObject;
@@ -526,7 +534,7 @@ bool IsHookInstalled() {
 }
 
 HWND GetActiveWindowFast() {
-    return s_activeHwnd.load(std::memory_order_acquire);
+    return SampleForegroundWindow();
 }
 
 } // namespace capture
