@@ -4,6 +4,9 @@
 #include <windows.h>
 #include <thread>
 #include <algorithm>
+#include <condition_variable>
+#include <mutex>
+#include <vector>
 
 #ifdef _MSC_VER
 namespace telemetry {
@@ -82,39 +85,38 @@ void ForensicRingBuffer::FlushToFile(const char* filepath) {
     FILE* f = fopen(filepath, "a");
     if (!f) return;
 
-    bool locked = false;
-    for (int attempt = 0; attempt < 100000; ++attempt) {
-        if (!lock.test_and_set(std::memory_order_acquire)) {
-            locked = true;
-            break;
-        }
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-        _mm_pause();
-#endif
-    }
+    std::vector<ForensicEvent> snapshot(SIZE);
+    size_t eventCount = 0;
+    uint64_t droppedBefore = 0;
 
-    if (!locked) {
-        fprintf(f, "--- FORENSIC FLUSH SKIPPED: ring buffer lock busy ---\n");
+    if (lock.test_and_set(std::memory_order_acquire)) {
         fclose(f);
         return;
     }
-
     size_t currHead = head;
     size_t start = flushed;
+    size_t prevFlushed = flushed;
     if (currHead - start > SIZE) {
         start = currHead - SIZE;
     }
 
-    if (start == currHead) {
-        lock.clear(std::memory_order_release);
+    eventCount = currHead - start;
+    for (size_t i = 0; i < eventCount; ++i) {
+        snapshot[i] = buffer[(start + i) & MASK];
+    }
+    flushed = currHead;
+    droppedBefore = dropped.exchange(0, std::memory_order_relaxed) + (start - prevFlushed);
+    lock.clear(std::memory_order_release);
+
+    if (eventCount == 0 && droppedBefore == 0) {
         fclose(f);
         return;
     }
 
     fprintf(f, "--- FORENSIC FLUSH tick_ms=%llu events=%llu dropped_before=%llu ---\n",
             (unsigned long long)GetTickCount64(),
-            (unsigned long long)(currHead - start),
-            (unsigned long long)(start - flushed));
+            (unsigned long long)eventCount,
+            (unsigned long long)droppedBefore);
 
     uint64_t created = g_timersCreated.load();
     uint64_t executed = g_timersExecuted.load();
@@ -123,8 +125,8 @@ void ForensicRingBuffer::FlushToFile(const char* filepath) {
             (unsigned long long)created, (unsigned long long)executed, (unsigned long long)cancelled,
             (unsigned long long)(created - executed - cancelled));
 
-    for (size_t i = start; i < currHead; i++) {
-        const auto& ev = buffer[i & MASK];
+    for (size_t i = 0; i < eventCount; i++) {
+        const auto& ev = snapshot[i];
         fprintf(f, "event=%s type=%u tid=%lu time_us=%lld reason=%d data1=%lu data2=%lu focus=%d\n",
             ForensicTrapName(ev.type),
             (unsigned int)ev.type,
@@ -136,9 +138,6 @@ void ForensicRingBuffer::FlushToFile(const char* filepath) {
             ev.focus ? 1 : 0);
     }
 
-    flushed = currHead;
-    lock.clear(std::memory_order_release);
-
     fprintf(f, "--- END FLUSH ---\n\n");
     fclose(f);
 }
@@ -146,6 +145,9 @@ void ForensicRingBuffer::FlushToFile(const char* filepath) {
 static std::string s_forensicLogPath;
 static std::thread s_forensicThread;
 static std::atomic<bool> s_forensicRunning{false};
+static std::atomic<bool> s_forensicFlushRequested{false};
+static std::mutex s_forensicWakeMutex;
+static std::condition_variable s_forensicWakeCv;
 
 static LONG WINAPI ForensicExceptionFilter(EXCEPTION_POINTERS* ep) {
     (void)ep;
@@ -187,17 +189,26 @@ void InitForensics(std::string path) {
         fprintf(f, "EXE path: %s\n", exePath);
         fprintf(f, "LogPath: %s\n", path.c_str());
         fprintf(f, "Scope: anomaly events only; raw input is not logged\n");
-        fprintf(f, "AutoFlush: 1000 ms plus explicit focus/profile/shutdown/crash flush\n");
+        fprintf(f, "AutoFlush: 1000 ms plus async focus/profile requests and shutdown/crash flush\n");
         fprintf(f, "===============================\n\n");
         fclose(f);
     }
 
     SetUnhandledExceptionFilter(ForensicExceptionFilter);
 
+    s_forensicFlushRequested.store(false, std::memory_order_relaxed);
     s_forensicRunning.store(true);
     s_forensicThread = std::thread([]() {
-        while(s_forensicRunning.load()) {
-            Sleep(1000);
+        while (s_forensicRunning.load(std::memory_order_relaxed)) {
+            {
+                std::unique_lock<std::mutex> lock(s_forensicWakeMutex);
+                s_forensicWakeCv.wait_for(lock, std::chrono::milliseconds(1000), [] {
+                    return !s_forensicRunning.load(std::memory_order_relaxed) ||
+                           s_forensicFlushRequested.load(std::memory_order_relaxed);
+                });
+                s_forensicFlushRequested.store(false, std::memory_order_relaxed);
+            }
+            if (!s_forensicRunning.load(std::memory_order_relaxed)) break;
             FlushForensicLog();
         }
     });
@@ -205,6 +216,7 @@ void InitForensics(std::string path) {
 
 void ShutdownForensics() {
     s_forensicRunning.store(false);
+    s_forensicWakeCv.notify_all();
     if (s_forensicThread.joinable()) {
         s_forensicThread.join();
     }
@@ -216,6 +228,11 @@ void FlushForensicLog() {
         s_forensicLogPath = MakeDefaultForensicLogPath();
     }
     g_forensicBuffer.FlushToFile(s_forensicLogPath.c_str());
+}
+
+void RequestForensicFlush() {
+    s_forensicFlushRequested.store(true, std::memory_order_release);
+    s_forensicWakeCv.notify_one();
 }
 
 const std::string& GetForensicLogPath() {

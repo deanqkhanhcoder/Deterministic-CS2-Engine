@@ -119,7 +119,7 @@ static bool IsTargetActive() {
 #if MARCO_ENABLE_FORENSIC
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, false };
         telemetry::g_forensicBuffer.Push(ev);
-        telemetry::FlushForensicLog();
+        telemetry::RequestForensicFlush();
 #endif
         engine::ClearHeldKeys();
         bhop::OnSpaceUp();
@@ -135,7 +135,7 @@ static bool IsTargetActive() {
 #if MARCO_ENABLE_FORENSIC
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, true };
         telemetry::g_forensicBuffer.Push(ev);
-        telemetry::FlushForensicLog();
+        telemetry::RequestForensicFlush();
 #endif
         
         // Sync local space state with actual hardware truth
@@ -152,6 +152,7 @@ static bool IsTargetActive() {
             bool shouldRouteBhop = isActive;
             if (shouldRouteBhop && rcfg::Get().bhopEnabled && (target_platform::GetActiveCapabilities() & target_platform::CAP_BHOP)) {
                 bhop::OnSpaceDown();
+                s_spaceSwallowed = true;
             } else {
                 s_spaceSwallowed = false;
             }

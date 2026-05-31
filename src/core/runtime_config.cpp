@@ -236,7 +236,7 @@ void Apply(const RuntimeConfig& newCfg) {
     telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::PROFILE_CHANGED, GetCurrentThreadId(), timing::NowUs(),
         (int32_t)validated.activeBrakeProfileIndex, (uint32_t)validated.bhopMode, (uint32_t)validated.bhopEnabled, true };
     telemetry::g_forensicBuffer.Push(ev);
-    telemetry::FlushForensicLog();
+    telemetry::RequestForensicFlush();
 #endif
 }
 

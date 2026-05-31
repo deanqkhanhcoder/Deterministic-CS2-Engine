@@ -494,6 +494,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
 
+    case WM_EMERGENCY_UNHOOK:
+        PostMessage(s_msgHwnd, WM_EMERGENCY_UNHOOK, 0, 0);
+        return 0;
+
+    case WM_ANALYSIS_ETW_START_FAILED:
+        MessageBoxW(hwnd,
+                    L"Failed to start ETW Kernel Logger.\n\nERROR_ACCESS_DENIED.\n\nYou must run CS2 Macro Suite as an Administrator to use ETW Diagnostics.",
+                    L"Access Denied",
+                    MB_ICONERROR | MB_TOPMOST);
+        return 0;
+
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED && rcfg::Get().minimizeToTray) {
             Hide();

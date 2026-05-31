@@ -49,6 +49,29 @@ struct alignas(64) PublishedState {
 };
 static PublishedState s_pubState;
 
+static void ReadPublishedEngineState(EngineStatePublication& pub) {
+    uint64_t buffer[PUB_WORDS];
+    uint32_t seq0, seq1;
+    int spinCount = 0;
+    while (true) {
+        seq0 = s_pubState.seq.load(std::memory_order_acquire);
+        if (seq0 & 1) {
+            if (spinCount < 64) _mm_pause();
+            else std::this_thread::yield();
+            spinCount++;
+            continue;
+        }
+        for (size_t i = 0; i < PUB_WORDS; ++i) {
+            buffer[i] = s_pubState.buffer[i].load(std::memory_order_relaxed);
+        }
+        std::atomic_thread_fence(std::memory_order_acq_rel);
+        seq1 = s_pubState.seq.load(std::memory_order_relaxed);
+        if (seq0 == seq1) break;
+        spinCount++;
+    }
+    std::memcpy(&pub, buffer, sizeof(pub));
+}
+
 
 State s_state;
 std::mutex s_stateMutex;
@@ -161,15 +184,7 @@ void ClearStateDirty() {
 // â”€â”€ Forward declarations â”€â”€
 #if MARCO_ENABLE_WATCHDOG
 void RunWatchdog() {
-    int64_t nowMs = timing::NowMs();
-    (void)nowMs;
-    InjectionBatch batch;
-    {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        // Watchdog relies on standard Reconcile logic if needed
-        PublishEngineState();
-    }
-    batch.flush();
+    telemetry::g_heartbeatTelemetry.store(timing::NowMs(), std::memory_order_relaxed);
 }
 
 // â”€â”€ SUSPEND / RESUME / FOCUS â”€â”€
@@ -210,26 +225,25 @@ void StartWatchdog() {
             
             bool corruption = false;
             static int corruptionCounter[4] = {0};
-            {
-                std::lock_guard<std::mutex> lock(s_stateMutex);
-                for (int i = 0; i < 4; i++) {
-                    bool logicalVal = s_state.logical[i];
-                    bool physVal = s_state.phys[i];
-                    // In offline playback, we don't have timers running.
-                    if (logicalVal && !physVal) {
-                        corruptionCounter[i]++;
-                        if (corruptionCounter[i] >= 10) {
-                            corruption = true;
+            EngineStatePublication pub;
+            ReadPublishedEngineState(pub);
+            for (int i = 0; i < 4; i++) {
+                bool logicalVal = pub.logical[i];
+                bool physVal = pub.phys[i];
+                // In offline playback, we don't have timers running.
+                if (logicalVal && !physVal) {
+                    corruptionCounter[i]++;
+                    if (corruptionCounter[i] >= 10) {
+                        corruption = true;
 #if MARCO_ENABLE_FORENSIC
-                            if (corruptionCounter[i] == 10) { // Only first detection to avoid spam
-                                telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::LOGICAL_PHYSICAL_DIVERGENCE, GetCurrentThreadId(), timing::NowUs(), i, (uint32_t)logicalVal, (uint32_t)physVal, false };
-                                telemetry::g_forensicBuffer.Push(ev);
-                            }
-#endif
+                        if (corruptionCounter[i] == 10) { // Only first detection to avoid spam
+                            telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::LOGICAL_PHYSICAL_DIVERGENCE, GetCurrentThreadId(), timing::NowUs(), i, (uint32_t)logicalVal, (uint32_t)physVal, false };
+                            telemetry::g_forensicBuffer.Push(ev);
                         }
-                    } else {
-                        corruptionCounter[i] = 0;
+#endif
                     }
+                } else {
+                    corruptionCounter[i] = 0;
                 }
             }
             
@@ -267,15 +281,19 @@ void TriggerEmergencyFlush() {
     
     InjectionBatch batch;
     {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
+        std::unique_lock<std::mutex> lock(s_stateMutex, std::try_to_lock);
         for (int i = 0; i < 4; i++) {
             Key k = static_cast<Key>(i);
             batch.push(k, false);
-            s_state.logical[i] = false;
             timing::CancelTimer(k);
-        s_state.expectedTimerId[ki(k)] = 0;
+            if (lock.owns_lock()) {
+                s_state.logical[i] = false;
+                s_state.expectedTimerId[ki(k)] = 0;
+            }
         }
-        PublishEngineState();
+        if (lock.owns_lock()) {
+            PublishEngineState();
+        }
     }
     batch.flush();
     INPUT inpSpace = {};
@@ -292,10 +310,12 @@ void TriggerEmergencyFlush() {
     }
     
     {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_state.suspended = true;
+        std::unique_lock<std::mutex> lock(s_stateMutex, std::try_to_lock);
+        if (lock.owns_lock()) {
+            s_state.suspended = true;
+            PublishEngineState();
+        }
         s_suspendedAtomic.store(true, std::memory_order_release);
-        PublishEngineState();
     }
     
     telemetry::g_recoveryCount.fetch_add(1, std::memory_order_relaxed);
@@ -313,27 +333,7 @@ bool IsTimingWorkloadActive() {
 
 void TakeSnapshot(RuntimeSnapshot& out) {
     EngineStatePublication pub;
-    uint64_t buffer[PUB_WORDS];
-    uint32_t seq0, seq1;
-    int spin_count = 0;
-    while (true) {
-        seq0 = s_pubState.seq.load(std::memory_order_acquire);
-        if (seq0 & 1) {
-            if (spin_count < 64) _mm_pause();
-            else if (spin_count < 1024) std::this_thread::yield();
-            else std::this_thread::sleep_for(std::chrono::microseconds(10));
-            spin_count++;
-            continue;
-        }
-        for (size_t i = 0; i < PUB_WORDS; ++i) {
-            buffer[i] = s_pubState.buffer[i].load(std::memory_order_relaxed);
-        }
-        std::atomic_thread_fence(std::memory_order_acq_rel);
-        seq1 = s_pubState.seq.load(std::memory_order_relaxed);
-        if (seq0 == seq1) break;
-        spin_count++;
-    }
-    std::memcpy(&pub, buffer, sizeof(pub));
+    ReadPublishedEngineState(pub);
 
     out.suspended = pub.suspended;
     for (int i = 0; i < 2; i++) out.axisState[i] = pub.axisState[i];

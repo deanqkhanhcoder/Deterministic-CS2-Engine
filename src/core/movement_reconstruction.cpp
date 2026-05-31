@@ -5,14 +5,21 @@
 #include "debug_logger.h"
 #include <cmath>
 #include <algorithm>
+#include <atomic>
+#include <memory>
 
 namespace movement {
 
-static double s_velocityLUT[51][51][2]; // [usX/tick][usY/tick][axis (0=X, 1=Y)]
-static int s_stopLUT[251][251][4]; // [vx][vy][wish_mode]
+struct MovementLutSnapshot {
+    double velocity[51][51][2]; // [usX/tick][usY/tick][axis (0=X, 1=Y)]
+    int stop[251][251][4];      // [vx][vy][wish_mode]
+};
+
+static std::atomic<std::shared_ptr<const MovementLutSnapshot>> s_lut;
 
 void InitLUT() {
     const RuntimeConfig& rc = rcfg::Get();
+    auto next = std::make_shared<MovementLutSnapshot>();
     double dt = 1.0 / 64.0;
     
     // 1. Generate 2D Velocity Accumulation LUT
@@ -62,8 +69,8 @@ void InitLUT() {
                 }
             }
             
-            s_velocityLUT[t1][t2][0] = vx;
-            s_velocityLUT[t1][t2][1] = vy;
+            next->velocity[t1][t2][0] = vx;
+            next->velocity[t1][t2][1] = vy;
         }
     }
 
@@ -72,7 +79,7 @@ void InitLUT() {
         for (int vy = 0; vy <= 250; ++vy) {
             for (int mode = 0; mode <= 3; ++mode) {
                 if (vx == 0 && vy == 0) {
-                    s_stopLUT[vx][vy][mode] = 0;
+                    next->stop[vx][vy][mode] = 0;
                     continue;
                 }
                 
@@ -131,10 +138,12 @@ void InitLUT() {
                 
                 double pure_ms = exact_ticks * 15.625;
                 double aligned_ms = std::ceil(pure_ms / 15.625) * 15.625;
-                s_stopLUT[vx][vy][mode] = (int)(aligned_ms + 0.5);
+                next->stop[vx][vy][mode] = (int)(aligned_ms + 0.5);
             }
         }
     }
+    std::shared_ptr<const MovementLutSnapshot> published = next;
+    s_lut.store(published, std::memory_order_release);
     // DLOG_INFO(Runtime, "movement::InitLUT() built 2D Matrix.");
 }
 
@@ -144,9 +153,16 @@ void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int sig
     int ticksY = (int)(heldUsY / 15625);
     if (ticksX > 50) ticksX = 50;
     if (ticksY > 50) ticksY = 50;
+
+    auto lut = s_lut.load(std::memory_order_acquire);
+    if (!lut) {
+        outVx = 0.0;
+        outVy = 0.0;
+        return;
+    }
     
-    outVx = s_velocityLUT[ticksX][ticksY][0] * signX;
-    outVy = s_velocityLUT[ticksX][ticksY][1] * signY;
+    outVx = lut->velocity[ticksX][ticksY][0] * signX;
+    outVy = lut->velocity[ticksX][ticksY][1] * signY;
     
     // Apply speed limits if walking
     // This is a simplification for walking
@@ -157,7 +173,9 @@ int LookupStopDur2D(double vx, double vy, int wish_mode, bool crouch) {
     int idx_x = std::clamp((int)std::abs(vx), 0, 250);
     int idx_y = std::clamp((int)std::abs(vy), 0, 250);
     int mode = std::clamp(wish_mode, 0, 3);
-    return s_stopLUT[idx_x][idx_y][mode];
+    auto lut = s_lut.load(std::memory_order_acquire);
+    if (!lut) return 0;
+    return lut->stop[idx_x][idx_y][mode];
 }
 
 double CalcIntentEfficiency(Key k, int64_t heldUs, const State& state, const RuntimeConfig& rc) {

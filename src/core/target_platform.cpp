@@ -162,7 +162,7 @@ void ResolveTargetAsync(TargetIdentity identity) {
             s_queueCount++;
         }
     }
-    s_resolverCv.notify_one();
+    s_resolverCv.notify_all();
 }
 
 static void ResolverWorker() {

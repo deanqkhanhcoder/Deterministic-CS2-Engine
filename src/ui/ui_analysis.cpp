@@ -11,6 +11,7 @@
 #include "debug_logger.h"
 #include "runtime_state.h"
 #include "telemetry.h"
+#include "types.h"
 #include <windows.h>
 #include <commdlg.h>
 #include <cstdio>
@@ -995,7 +996,7 @@ void OnCommand(HWND hwnd, WPARAM wParam) {
         case IDB_ETW_START:
             std::thread([hwnd]() {
                 if (!etw::StartGlobalTrace()) {
-                    MessageBoxW(hwnd, L"Failed to start ETW Kernel Logger.\n\nERROR_ACCESS_DENIED.\n\nYou must run CS2 Macro Suite as an Administrator to use ETW Diagnostics.", L"Access Denied", MB_ICONERROR | MB_TOPMOST);
+                    PostMessage(hwnd, WM_ANALYSIS_ETW_START_FAILED, 0, 0);
                 }
                 InvalidateRect(hwnd, nullptr, TRUE);
             }).detach();

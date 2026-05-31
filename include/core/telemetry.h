@@ -151,16 +151,17 @@ class ForensicRingBuffer {
     alignas(64) size_t head = 0;
     alignas(64) size_t flushed = 0;
     alignas(64) std::atomic_flag lock = ATOMIC_FLAG_INIT;
+    alignas(64) std::atomic<uint64_t> dropped{0};
 public:
     void Push(const ForensicEvent& ev) {
-        while (lock.test_and_set(std::memory_order_acquire)) {
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-            _mm_pause();
-#endif
+        if (lock.test_and_set(std::memory_order_acquire)) {
+            dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
         }
         buffer[head & MASK] = ev;
         head++;
         if (head - flushed > SIZE) {
+            dropped.fetch_add((head - SIZE) - flushed, std::memory_order_relaxed);
             flushed = head - SIZE;
         }
         lock.clear(std::memory_order_release);
@@ -183,6 +184,7 @@ extern ForensicRingBuffer g_forensicBuffer;
 void InitForensics(std::string path);
 void ShutdownForensics();
 void FlushForensicLog();
+void RequestForensicFlush();
 const std::string& GetForensicLogPath();
 
 extern std::atomic<uint64_t> g_timersCreated;
