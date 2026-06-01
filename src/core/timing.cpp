@@ -142,7 +142,7 @@ static void TimerThreadFunc() {
     while (true) {
         // Heartbeat & Core tracking
 #if MARCO_ENABLE_HEARTBEATS
-        telemetry::g_heartbeatTiming.store(NowMs(), std::memory_order_relaxed);
+
 #endif
         uint32_t procNumber = GetCurrentProcessorNumber();
         (void)procNumber;
@@ -172,17 +172,14 @@ static void TimerThreadFunc() {
         if (!s_running) break;
 
         if (nearestIdx < 0) {
-            // No active timers â€” wait for signal with timeout (250ms) to maintain heartbeat/core telemetry
+            // No active timers â€” wait for signal with timeout (250ms) to maintain core telemetry
             // Only mark blocked if we are actually waiting
-#if MARCO_ENABLE_HEARTBEATS
-            telemetry::g_blockedTiming.store(true, std::memory_order_relaxed);
-#endif
             lock.unlock();
             DWORD waitRes = WaitForSingleObject(s_cv_event, 250);
             (void)waitRes;
 #if MARCO_ENABLE_HEARTBEATS
             telemetry::g_blockedTiming.store(false, std::memory_order_relaxed);
-            telemetry::g_heartbeatTiming.store(NowMs(), std::memory_order_relaxed);
+
 #endif
 
             lock.lock();
@@ -197,13 +194,7 @@ static void TimerThreadFunc() {
         int64_t wakeMargin = s_adaptiveWakeMarginUs.load(std::memory_order_relaxed);
         int64_t spinTail = s_adaptiveSpinTailUs.load(std::memory_order_relaxed);
 
-        // Fallback safety: if watchdog trips/fatal, downgrade immediately
-#if MARCO_ENABLE_WATCHDOG
-        if (telemetry::g_watchdogState.load(std::memory_order_relaxed) == 2) {
-            wakeMargin = 200; // Low CPU mode
-            spinTail = 100;
-        }
-#endif
+
 
         if (remainUs > wakeMargin) {
             LARGE_INTEGER dueTime;
@@ -213,14 +204,9 @@ static void TimerThreadFunc() {
             }
             
             lock.unlock();
-#if MARCO_ENABLE_WATCHDOG
-            telemetry::g_blockedTiming.store(true, std::memory_order_relaxed);
-#endif
+
             WaitForMultipleObjects(2, events, FALSE, INFINITE);
-#if MARCO_ENABLE_WATCHDOG
-            telemetry::g_blockedTiming.store(false, std::memory_order_relaxed);
-            telemetry::g_heartbeatTiming.store(NowMs(), std::memory_order_relaxed);
-#endif
+
             lock.lock();
             continue; // Re-evaluate nearest
         }
@@ -239,15 +225,7 @@ static void TimerThreadFunc() {
                 break; // Break out to re-evaluate if new timer was scheduled
             }
             // If in recovery fallback, sleep instead of heavy spin
-#if MARCO_ENABLE_WATCHDOG
-            if (telemetry::g_watchdogState.load(std::memory_order_relaxed) == 2) {
-                Sleep(0);
-            } else {
-                _mm_pause();  // CPU hint: reduce power, yield to SMT sibling
-            }
-#else
             _mm_pause();
-#endif
         }
 
         // Check if still active (may have been cancelled during spin)

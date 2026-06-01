@@ -52,7 +52,7 @@ struct TraceBuffer {
     TraceEvent events[TRACE_BUFFER_SIZE];
 };
 
-#if MARCO_ENABLE_DIAGNOSTICS
+#if !defined(MARCO_RELEASE)
 extern TraceBuffer g_traceBuffer;
 
 void Init();

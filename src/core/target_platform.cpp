@@ -297,9 +297,7 @@ void GetActiveTargetName(wchar_t* outBuf, size_t maxLen) {
 void ProcessScannerWorker() {
     topology::PinBackgroundThread();
     while (s_resolverRunning.load(std::memory_order_relaxed)) {
-#if MARCO_ENABLE_WATCHDOG
-        telemetry::g_heartbeatScanner.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
+
         uint32_t mask = MASK_NONE;
         HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnap != INVALID_HANDLE_VALUE) {
@@ -319,18 +317,13 @@ void ProcessScannerWorker() {
         }
         s_runningGamesMask.store(mask, std::memory_order_relaxed);
         
-#if MARCO_ENABLE_WATCHDOG
-        telemetry::g_blockedScanner.store(true, std::memory_order_relaxed);
-#endif
+
         std::unique_lock<std::mutex> lock(s_resolverMutex);
         s_resolverCv.wait_for(lock, std::chrono::milliseconds(2000), [] {
             return !s_resolverRunning.load(std::memory_order_relaxed);
         });
         if (!s_resolverRunning.load(std::memory_order_relaxed)) break;
-#if MARCO_ENABLE_WATCHDOG
-        telemetry::g_blockedScanner.store(false, std::memory_order_relaxed);
-        telemetry::g_heartbeatScanner.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
+
     }
 }
 

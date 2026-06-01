@@ -1,6 +1,6 @@
 # MARCO KNOWLEDGE BASE (SINGLE SOURCE OF TRUTH)
 
-*Date: 2026-05-30 | Engine Version: V27.4*
+*Date: 2026-06-01 | Engine Version: V27.6*
 
 ## 1. Project Overview
 Marco Engine là một Windows C++20 input-processing engine cho game FPS (chủ yếu là CS2 và Roblox). Nó bắt phím cấp thấp (low-level hook), theo dõi trạng thái vật lý và logic độc lập, thực thi các macro (Counter-Strafe, BHOP), và inject phím ảo qua `SendInput`.
@@ -30,7 +30,7 @@ Khác với AHK cũ, C++ BHOP dùng worker thread riêng biệt. SpaceDown báo 
 Sử dụng mô hình Seqlock (Write-Release / Read-Acquire) để cấu hình có thể cập nhật từ UI Thread mà không cần khóa Mutex cản trở Hook Thread hay Timer Thread.
 
 ## 8. Telemetry / Forensic Architecture
-Hệ thống sử dụng Ring Buffer lock-free. Sự kiện vòng đời (Focus, Profile) và lỗi logic (`BHOP_STALL`, `COUNTERSTRAFE_CONFLICT`) được đẩy liên tục. Watchdog chạy định kỳ để dump log khẩn cấp nếu UI hoặc Timer bị đứng.
+Hệ thống sử dụng Ring Buffer lock-free. Sự kiện vòng đời (Focus, Profile) và lỗi logic (`BHOP_STALL`, `COUNTERSTRAFE_CONFLICT`) được đẩy liên tục vào `ForensicRingBuffer`. Kể từ V27.6, Watchdog đã bị xóa bỏ hoàn toàn để giảm footprint, và Forensic được decouple để chạy cả trên Release build nhằm theo dõi Focus Event.
 
 ## 9. Directory Structure
 - `src/core/`, `src/ui/`: Logic lõi và Giao diện.
@@ -109,19 +109,23 @@ Status vocabulary for this pass:
 | BUG-010 Watchdog Self-Deadlock | IMPLEMENTED, TESTED (build), RUNTIME NOT YET VERIFIED | Watchdog health checks read the published seqlock snapshot instead of locking `s_stateMutex`; emergency recovery uses `try_to_lock` so unhook signaling can proceed if state mutex is stuck. |
 | BUG-011 Synchronous I/O In Hook | IMPLEMENTED, TESTED (build), RUNTIME NOT YET VERIFIED | Focus-loss/focus-gain paths now call `telemetry::RequestForensicFlush()` instead of `FlushForensicLog()`; the telemetry thread performs disk flush asynchronously. |
 
-BUG-008 remains REJECTED from the certification matrix and was not part of this execution pass.
+| BUG-011 Synchronous I/O In Hook | IMPLEMENTED, TESTED (build), RUNTIME NOT YET VERIFIED | Focus-loss/focus-gain paths now call `telemetry::RequestForensicFlush()` instead of `FlushForensicLog()`; the telemetry thread performs disk flush asynchronously. |
+
+**V27.6 Maturity Update**:
+- Removed Watchdog Architecture (fixes BUG-008, BUG-010). UI Watchdog also removed.
+- Cleaned up `autofire_controller` (dead code), F8 tracking, and `WM_TIMER_EXPIRED`.
+- Decoupled `ForensicRingBuffer` from `MARCO_ENABLE_FORENSIC` for production observability, preserving WARN/ERROR/FATAL logging in Release builds.
 
 ## 17. Technical Debt
 
-- Macro cờ build (`MARCO_ENABLE_LOGGING` v.v) chưa bị xoá ở `build_config.h` dù không có người dùng.
-- Constant thông điệp Windows thừa thãi (`WM_TIMER_EXPIRED`).
-- F8 tracking vô hình còn tồn tại trong `input_capture.cpp`.
-- Các đoạn dead code dư thừa do xoá Subtick Autofire (`autofire_controller.cpp`).
+- Macro cờ build (`MARCO_ENABLE_LOGGING` v.v) chưa bị xoá ở `build_config.h` dù không có người dùng (Đã dọn dẹp ở V27.6).
+- Constant thông điệp Windows thừa thãi (`WM_TIMER_EXPIRED`) (Đã xoá ở V27.6).
+- F8 tracking vô hình còn tồn tại trong `input_capture.cpp` (Đã xoá ở V27.6).
+- Các đoạn dead code dư thừa do xoá Subtick Autofire (`autofire_controller.cpp`) (Đã dọn ở V27.6).
 
-## 18. Deferred After V27.5
+## 18. Deferred After V27.6
 - Real gameplay validation for BUG-002/003/004/005/006/007/009/010/011 remains required.
-- Xóa bỏ Developer Forensics ra khỏi bản Release (Observability Slimdown).
-- Viết lại toàn bộ `tests/` để hoạt động với API V27.4 mới.
+- Viết lại toàn bộ `tests/` để hoạt động với API V27.6 mới.
 
 ## 19. Risk Register
 - Nếu BUG-004 (Resolver Starvation) xảy ra, target window không được nhận diện, toàn bộ macro tắt ngóm. Cực kỳ dễ xảy ra nếu người dùng spam Alt-tab.

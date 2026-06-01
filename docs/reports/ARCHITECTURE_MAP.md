@@ -21,7 +21,7 @@ All runtime paths MUST go through `src/core/workspace.cpp`. No hardcoded local p
 |---|---|---|
 | **Input Capture** | `input_capture.cpp` | OS low-level hooks (`WH_KEYBOARD_LL`, `WH_MOUSE_LL`). Evaluates active focus. |
 | **Input Router** | `input_router.cpp` | Semantic routing. Decides if hardware key inputs should trigger macro features. |
-| **State Engine** | `state_engine.cpp` | Unified physical + logical state, UI publication (`s_pubState`), Watchdog. |
+| **State Engine** | `state_engine.cpp` | Unified physical + logical state, UI publication (`s_pubState`). |
 | **State Reconciliation**| `state_reconciliation.cpp` | Re-syncs physical to logical state when transitioning focus or suspend modes. |
 | **Counter-Strafe** | `counterstrafe_controller.cpp` | Movement mechanics. Resolves WASD axis conflicts and queues braking. |
 | **BHOP** | `bhop.cpp` | Space bar simulation. Calculates jump delays using Gaussian distributions. |
@@ -31,7 +31,7 @@ All runtime paths MUST go through `src/core/workspace.cpp`. No hardcoded local p
 | **Telemetry** | `telemetry.cpp` | Forensic event collection, ETW tracing, and auto-flushing logic. |
 
 ## 4. Observability & Logging Architecture
-- **Production Telemetry**: Tracks critical events (FOCUS_LOST, FOCUS_GAINED, PROFILE_CHANGED) via `ForensicRingBuffer`.
+- **Production Telemetry**: Tracks critical events (FOCUS_LOST, FOCUS_GAINED, PROFILE_CHANGED) via `ForensicRingBuffer` in all builds.
 - **Developer Forensics**: Collects micro-events (`BHOP_STALL`, `COUNTERSTRAFE_CONFLICT`, `LOGICAL_PHYSICAL_DIVERGENCE`). Gated by `MARCO_ENABLE_FORENSIC`.
 - **Crash Flushing**: Handled via `SetUnhandledExceptionFilter`, automatically dumps the Ring Buffer to `runtime/crash/` and `runtime/logs/`.
 - **ETW Integration**: Real-time DPC/ISR profiling available via `etw_controller.cpp`.
@@ -43,4 +43,3 @@ All runtime paths MUST go through `src/core/workspace.cpp`. No hardcoded local p
 - **Resolver/Scanner Threads**: Periodically scans process lists to identify the target game.
 - **Timer Thread**: Spin-loops for nanosecond precision dispatch of key-up events.
 - **BHOP Thread**: Sleeps on a condition variable, wakes to execute jump sequences.
-- **Watchdog Thread**: Monitors heartbeat signals from other threads to detect stalls.

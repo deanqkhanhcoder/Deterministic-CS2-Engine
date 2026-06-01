@@ -1,7 +1,6 @@
 #include "build_config.h"
 #include "debug_logger.h"
 #include "workspace.h"
-#if MARCO_ENABLE_FORENSIC
 
 #include <windows.h>
 #include <cstdio>
@@ -101,5 +100,3 @@ void Flush() {
 }
 
 } // namespace dlog
-
-#endif // MARCO_ENABLE_FORENSIC

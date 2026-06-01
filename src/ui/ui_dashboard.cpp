@@ -194,11 +194,6 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
             layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Session Uptime", uptimeW, theme::FG_VALUE);
             py += rowH;
 
-            layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Watchdog State",
-                                  (snap.watchdogState == 2) ? L"TRIPPED" : L"OK",
-                                  (snap.watchdogState == 2) ? theme::CLR_OFF : theme::CLR_ON);
-            py += rowH;
-
             const wchar_t* affNames[] = { L"Competitive", L"Balanced", L"Low CPU" };
             uint32_t affIdx = snap.affinityMode;
             if (affIdx > 2) affIdx = 1;
@@ -298,20 +293,10 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
             
             // Strict 3-Column Grid
             int colWidth = innerW / 3;
-            int col0X = innerX;
-            int col1X = innerX + colWidth;
             int col2X = innerX + colWidth * 2;
             
             int labelW = (int)(colWidth * 0.55f);
             int valW   = (int)(colWidth * 0.35f);
-
-            int py1 = innerY;
-            layout::DrawRowCustom(hdc, col0X, py1, labelW, valW, rowH, L"Timing Thread", snap.threadHealthTiming ? L"ALIVE" : L"STALLED", snap.threadHealthTiming ? theme::CLR_ON : theme::CLR_OFF); py1 += rowH;
-            layout::DrawRowCustom(hdc, col0X, py1, labelW, valW, rowH, L"Hook Thread", snap.threadHealthHook ? L"ALIVE" : L"STALLED", snap.threadHealthHook ? theme::CLR_ON : theme::CLR_OFF);
-
-            int py2 = innerY;
-            layout::DrawRowCustom(hdc, col1X, py2, labelW, valW, rowH, L"Scanner Thread", snap.threadHealthScanner ? L"ALIVE" : L"STALLED", snap.threadHealthScanner ? theme::CLR_ON : theme::CLR_OFF); py2 += rowH;
-            layout::DrawRowCustom(hdc, col1X, py2, labelW, valW, rowH, L"Telemetry Thread", snap.threadHealthTelemetry ? L"ALIVE" : L"STALLED", snap.threadHealthTelemetry ? theme::CLR_ON : theme::CLR_OFF);
 
             int py3 = innerY;
             wchar_t triggersW[32]; swprintf_s(triggersW, L"0x%X", snap.failSafeTriggers);

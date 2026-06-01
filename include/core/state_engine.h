@@ -45,13 +45,7 @@ void RebuildState();
 // ── Timer expiry callback ──
 void OnTimerExpired(Key k, uint64_t timerId);
 
-// ── Watchdog ──
-#if MARCO_ENABLE_WATCHDOG
-void RunWatchdog();
-void StartWatchdog();
-void StopWatchdog();
-void TriggerEmergencyFlush();
-#endif
+// ── Watchdog removed ──
 
 // ── Suspend/Resume ──
 void ToggleSuspend();

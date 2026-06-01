@@ -13,9 +13,7 @@ namespace ui_diagnostics {
 extern std::atomic<uint64_t> g_uiHeartbeatUs;
 extern thread_local int g_paintDepth;
 
-// Diagnostics API
-void StartWatchdog();
-void StopWatchdog();
+
 
 // Timers
 void StartPaint();
@@ -39,8 +37,7 @@ void PaintOverlay(HDC hdc, RECT rc);
 inline std::atomic<uint64_t> g_uiHeartbeatUs{0};
 inline thread_local int g_paintDepth{0};
 
-inline void StartWatchdog() {}
-inline void StopWatchdog() {}
+
 inline void StartPaint() {}
 inline void EndPaint() {}
 inline void StartDispatch() {}

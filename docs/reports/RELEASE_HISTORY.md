@@ -1,5 +1,19 @@
 # RELEASE HISTORY
 
+## Version: v27.6 (Maturity Pass)
+*Date: 2026-06-01*
+
+Highlights:
+- Purged Watchdog architecture (engine and UI) to reduce footprint.
+- Decoupled ForensicRingBuffer to persist focus tracking in production.
+- Kept WARN/ERROR/FATAL logging available in Release builds, omitting TRACE/INFO.
+- Cleaned up dead code (autofire, F8 tracking, unused build flags).
+- No gameplay behavior changes.
+
+Status:
+SOURCE CERTIFIED
+STABLE
+
 ## Version: v27.5-rc1
 *Date: 2026-05-30*
 

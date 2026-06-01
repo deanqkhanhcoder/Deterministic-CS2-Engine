@@ -177,8 +177,6 @@ alignas(64) extern std::atomic<uint32_t> g_activeTimingCore;
 alignas(64) extern std::atomic<uint32_t> g_activeHookGroup;
 alignas(64) extern std::atomic<uint32_t> g_activeHookCore;
 
-#if MARCO_ENABLE_FORENSIC
-extern EventRingBuffer g_eventBuffer;
 extern ForensicRingBuffer g_forensicBuffer;
 
 void InitForensics(std::string path);
@@ -186,6 +184,9 @@ void ShutdownForensics();
 void FlushForensicLog();
 void RequestForensicFlush();
 const std::string& GetForensicLogPath();
+
+#if MARCO_ENABLE_FORENSIC
+extern EventRingBuffer g_eventBuffer;
 
 extern std::atomic<uint64_t> g_timersCreated;
 extern std::atomic<uint64_t> g_timersExecuted;
@@ -205,21 +206,7 @@ alignas(64) extern std::atomic<int64_t> g_wakeVarianceUs;
 
 #endif // MARCO_ENABLE_FORENSIC
 
-#if MARCO_ENABLE_HEARTBEATS
-alignas(64) extern std::atomic<int64_t> g_heartbeatTiming;
-alignas(64) extern std::atomic<int64_t> g_heartbeatHook;
-alignas(64) extern std::atomic<int64_t> g_heartbeatScanner;
-alignas(64) extern std::atomic<int64_t> g_heartbeatTelemetry;
 
-alignas(64) extern std::atomic<bool> g_blockedTiming;
-alignas(64) extern std::atomic<bool> g_blockedHook;
-alignas(64) extern std::atomic<bool> g_blockedScanner;
-alignas(64) extern std::atomic<bool> g_blockedTelemetry;
-
-alignas(64) extern std::atomic<uint32_t> g_watchdogState;
-alignas(64) extern std::atomic<uint32_t> g_failSafeTriggers;
-alignas(64) extern std::atomic<uint32_t> g_recoveryCount;
-#endif // MARCO_ENABLE_HEARTBEATS
 
 alignas(64) extern std::atomic<uint32_t> g_affinityMode;
 

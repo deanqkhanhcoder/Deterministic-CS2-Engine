@@ -232,12 +232,10 @@ void Apply(const RuntimeConfig& newCfg) {
     // 3. Regenerate offline physics LUTs based on new config parameters
     movement::InitLUT();
 
-#if MARCO_ENABLE_FORENSIC
     telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::PROFILE_CHANGED, GetCurrentThreadId(), timing::NowUs(),
         (int32_t)validated.activeBrakeProfileIndex, (uint32_t)validated.bhopMode, (uint32_t)validated.bhopEnabled, true };
     telemetry::g_forensicBuffer.Push(ev);
     telemetry::RequestForensicFlush();
-#endif
 }
 
 RuntimeConfig& GetMutable() {

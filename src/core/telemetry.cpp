@@ -25,13 +25,15 @@ TRACELOGGING_DEFINE_PROVIDER(
 #include "build_config.h"
 
 namespace telemetry {
+ForensicRingBuffer g_forensicBuffer;
+
 #if MARCO_ENABLE_FORENSIC
 EventRingBuffer g_eventBuffer;
-ForensicRingBuffer g_forensicBuffer;
 
 std::atomic<uint64_t> g_timersCreated{0};
 std::atomic<uint64_t> g_timersExecuted{0};
 std::atomic<uint64_t> g_timersCancelled{0};
+#endif
 
 #include <stdio.h>
 #include <time.h>
@@ -118,12 +120,14 @@ void ForensicRingBuffer::FlushToFile(const char* filepath) {
             (unsigned long long)eventCount,
             (unsigned long long)droppedBefore);
 
+#if MARCO_ENABLE_FORENSIC
     uint64_t created = g_timersCreated.load();
     uint64_t executed = g_timersExecuted.load();
     uint64_t cancelled = g_timersCancelled.load();
     fprintf(f, "TIMER_COUNTERS created=%llu executed=%llu cancelled=%llu derived_active=%llu\n",
             (unsigned long long)created, (unsigned long long)executed, (unsigned long long)cancelled,
             (unsigned long long)(created - executed - cancelled));
+#endif
 
     for (size_t i = 0; i < eventCount; i++) {
         const auto& ev = snapshot[i];
@@ -242,6 +246,7 @@ const std::string& GetForensicLogPath() {
     return s_forensicLogPath;
 }
 
+#if MARCO_ENABLE_FORENSIC
 static std::thread s_telemetryThread;
 static std::atomic<bool> s_telemetryRunning{false};
 
@@ -297,10 +302,7 @@ alignas(64) std::atomic<uint32_t> g_activeHookCore{0xFFFFFFFF};
 
 #if MARCO_ENABLE_HEARTBEATS
 
-alignas(64) std::atomic<int64_t> g_heartbeatTiming{0};
-alignas(64) std::atomic<int64_t> g_heartbeatHook{0};
-alignas(64) std::atomic<int64_t> g_heartbeatScanner{0};
-alignas(64) std::atomic<int64_t> g_heartbeatTelemetry{0};
+
 
 alignas(64) std::atomic<bool> g_blockedTiming{false};
 alignas(64) std::atomic<bool> g_blockedHook{false};

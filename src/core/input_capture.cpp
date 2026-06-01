@@ -116,11 +116,9 @@ static bool IsTargetActive() {
     if (s_wasTargetActive && !isActive) {
         s_wasTargetActive = isActive;
         DLOG_WARN(Hook, "Target focus LOST [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
-#if MARCO_ENABLE_FORENSIC
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, false };
         telemetry::g_forensicBuffer.Push(ev);
         telemetry::RequestForensicFlush();
-#endif
         engine::ClearHeldKeys();
         bhop::OnSpaceUp();
         s_spaceSwallowed = false; // Explicit swallow release
@@ -132,11 +130,9 @@ static bool IsTargetActive() {
     } else if (!s_wasTargetActive && isActive) {
         s_wasTargetActive = isActive;
         DLOG_WARN(Hook, "Target focus REGAINED [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
-#if MARCO_ENABLE_FORENSIC
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, true };
         telemetry::g_forensicBuffer.Push(ev);
         telemetry::RequestForensicFlush();
-#endif
         
         // Sync local space state with actual hardware truth
         s_physSpaceDown = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
@@ -187,9 +183,6 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 #endif
 
     // Heartbeat & Core tracking
-#if MARCO_ENABLE_WATCHDOG
-    telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
     uint32_t procNumber = GetCurrentProcessorNumber();
     uint32_t prevCore = telemetry::g_activeHookCore.exchange(procNumber, std::memory_order_relaxed);
     (void)prevCore;
@@ -404,9 +397,6 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 #endif
 
     // Heartbeat & Core tracking
-#if MARCO_ENABLE_WATCHDOG
-    telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
     uint32_t procNumber = GetCurrentProcessorNumber();
     uint32_t prevCore = telemetry::g_activeHookCore.exchange(procNumber, std::memory_order_relaxed);
     (void)prevCore;

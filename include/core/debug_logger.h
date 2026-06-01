@@ -1,9 +1,6 @@
-﻿#pragma once
+#pragma once
 
 #include "build_config.h"
-
-#if MARCO_ENABLE_FORENSIC
-
 #include <cstdint>
 
 namespace dlog {
@@ -40,6 +37,8 @@ void Flush(); // Force flush
 
 } // namespace dlog
 
+#if MARCO_ENABLE_FORENSIC
+
 #define DLOG_TRACE(sys, fmt, ...) dlog::Write(dlog::Subsystem::sys, dlog::Level::Trace, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #define DLOG_INFO(sys, fmt, ...)  dlog::Write(dlog::Subsystem::sys, dlog::Level::Info,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #define DLOG_WARN(sys, fmt, ...)  dlog::Write(dlog::Subsystem::sys, dlog::Level::Warn,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -50,14 +49,9 @@ void Flush(); // Force flush
 
 #define DLOG_TRACE(sys, ...) do {} while(0)
 #define DLOG_INFO(sys, ...)  do {} while(0)
-#define DLOG_WARN(sys, ...)  do {} while(0)
-#define DLOG_ERR(sys, ...)   do {} while(0)
-#define DLOG_FATAL(sys, ...) do {} while(0)
-
-namespace dlog {
-inline void Init() {}
-inline void Shutdown() {}
-inline void Flush() {}
-}
+// Keep WARN, ERR, FATAL in production
+#define DLOG_WARN(sys, fmt, ...)  dlog::Write(dlog::Subsystem::sys, dlog::Level::Warn,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define DLOG_ERR(sys, fmt, ...)   dlog::Write(dlog::Subsystem::sys, dlog::Level::Error, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define DLOG_FATAL(sys, fmt, ...) dlog::Write(dlog::Subsystem::sys, dlog::Level::Fatal, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
 #endif

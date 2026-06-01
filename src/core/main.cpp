@@ -61,25 +61,13 @@ static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
 
 
 // ── Globals ──
-#if MARCO_ENABLE_WATCHDOG
-static UINT_PTR g_watchdogTimerId = 0;
-
-// ── Watchdog timer callback ──
-static void CALLBACK WatchdogTimerProc(HWND, UINT, UINT_PTR, DWORD) {
-#if MARCO_ENABLE_HEARTBEATS
-    telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
-    engine::RunWatchdog();
-    capture::PollTarget();
-}
-#endif
 
 // ── Main window procedure for the hidden message window ──
 // This receives timer-thread messages and hotkey commands.
 // The UI window (ui_main) handles its own WndProc separately.
 static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #if MARCO_ENABLE_HEARTBEATS
-    telemetry::g_heartbeatHook.store(timing::NowMs(), std::memory_order_relaxed);
+
 #endif
     switch (msg) {
         case WM_TOGGLE_SUSPEND: {
@@ -272,11 +260,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     DLOG_INFO(Runtime, "TRACE: engine::SetHookInstalled(true) OK");
 
     // â”€â”€ Start watchdog timer â”€â”€
-#if MARCO_ENABLE_WATCHDOG
-    g_watchdogTimerId = SetTimer(msgHwnd, 1, rcfg::Get().watchdogIntervalMs, WatchdogTimerProc);
-    engine::StartWatchdog();
-    DLOG_INFO(Runtime, "TRACE: Watchdog started OK");
-#endif
 
 #if MARCO_ENABLE_ETW
     // â”€â”€ Start Kernel ETW Tracing â”€â”€
@@ -292,9 +275,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     //  MESSAGE LOOP (serves both hidden msg window and UI window)
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-#if MARCO_ENABLE_DIAGNOSTICS
-    ui_diagnostics::StartWatchdog();
-#endif
+
 
     MSG msg;
     while (true) {
@@ -340,18 +321,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (quit) break;
     }
     
-#if MARCO_ENABLE_DIAGNOSTICS
-    ui_diagnostics::StopWatchdog();
-#endif
+
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     //  CLEANUP
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     DLOG_INFO(Shutdown, "Shutting down...");
-#if MARCO_ENABLE_WATCHDOG
-    engine::StopWatchdog();
-    if (g_watchdogTimerId) KillTimer(msgHwnd, g_watchdogTimerId);
-#endif
     
     // Ensure all injected keys are released before unhooking
     engine::ClearHeldKeys();

@@ -89,7 +89,6 @@ constexpr int ki(Key k) { return static_cast<int>(k); }
 constexpr int ai(Axis a) { return static_cast<int>(a); }
 
 // ── Custom message IDs ──
-constexpr UINT WM_TIMER_EXPIRED   = WM_APP + 1;
 constexpr UINT WM_TOGGLE_SUSPEND  = WM_APP + 2;
 constexpr UINT WM_BHOP_TOGGLE     = WM_APP + 3;
 constexpr UINT WM_BHOP_CYCLE_MODE = WM_APP + 4;

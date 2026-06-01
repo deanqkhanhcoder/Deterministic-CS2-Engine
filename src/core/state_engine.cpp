@@ -30,8 +30,7 @@ namespace engine {
 static HWND  s_hwnd = nullptr;
 static int64_t s_initTimeMs = 0;
 static std::atomic<bool> s_stateDirty{false};
-static std::atomic<bool> s_watchdogRunning{false};
-static std::thread s_watchdogThread;
+
 
 // --- Lock-Free Publication ---
 struct EngineStatePublication {
@@ -181,148 +180,7 @@ void ClearStateDirty() {
     s_stateDirty.store(false, std::memory_order_relaxed);
 }
 
-// â”€â”€ Forward declarations â”€â”€
-#if MARCO_ENABLE_WATCHDOG
-void RunWatchdog() {
-    telemetry::g_heartbeatTelemetry.store(timing::NowMs(), std::memory_order_relaxed);
-}
 
-// â”€â”€ SUSPEND / RESUME / FOCUS â”€â”€
-void StartWatchdog() {
-    s_watchdogRunning.store(true, std::memory_order_relaxed);
-    int64_t now = timing::NowMs();
-    telemetry::g_heartbeatTiming.store(now, std::memory_order_relaxed);
-    telemetry::g_heartbeatHook.store(now, std::memory_order_relaxed);
-    telemetry::g_heartbeatScanner.store(now, std::memory_order_relaxed);
-    telemetry::g_heartbeatTelemetry.store(now, std::memory_order_relaxed);
-    s_watchdogThread = std::thread([]() {
-        topology::PinBackgroundThread();
-        
-        while (s_watchdogRunning.load(std::memory_order_relaxed)) {
-            Sleep(100);
-            
-            telemetry::g_heartbeatTelemetry.store(timing::NowMs(), std::memory_order_relaxed);
-            
-            int64_t now = timing::NowMs();
-            
-            bool timingStalled = false;
-            if (!telemetry::g_blockedTiming.load(std::memory_order_relaxed)) {
-                int64_t diff = now - telemetry::g_heartbeatTiming.load(std::memory_order_relaxed);
-                if (diff > 1000) timingStalled = true;
-            }
-            
-            bool hookStalled = false;
-            if (!telemetry::g_blockedHook.load(std::memory_order_relaxed)) {
-                int64_t diff = now - telemetry::g_heartbeatHook.load(std::memory_order_relaxed);
-                if (diff > 1000) hookStalled = true;
-            }
-            
-            bool scannerStalled = false;
-            if (!telemetry::g_blockedScanner.load(std::memory_order_relaxed)) {
-                int64_t diff = now - telemetry::g_heartbeatScanner.load(std::memory_order_relaxed);
-                if (diff > 5000) scannerStalled = true;
-            }
-            
-            bool corruption = false;
-            static int corruptionCounter[4] = {0};
-            EngineStatePublication pub;
-            ReadPublishedEngineState(pub);
-            for (int i = 0; i < 4; i++) {
-                bool logicalVal = pub.logical[i];
-                bool physVal = pub.phys[i];
-                // In offline playback, we don't have timers running.
-                if (logicalVal && !physVal) {
-                    corruptionCounter[i]++;
-                    if (corruptionCounter[i] >= 10) {
-                        corruption = true;
-#if MARCO_ENABLE_FORENSIC
-                        if (corruptionCounter[i] == 10) { // Only first detection to avoid spam
-                            telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::LOGICAL_PHYSICAL_DIVERGENCE, GetCurrentThreadId(), timing::NowUs(), i, (uint32_t)logicalVal, (uint32_t)physVal, false };
-                            telemetry::g_forensicBuffer.Push(ev);
-                        }
-#endif
-                    }
-                } else {
-                    corruptionCounter[i] = 0;
-                }
-            }
-            
-        uint32_t triggers = 0;
-            if (timingStalled) triggers |= 1;
-            if (hookStalled)   triggers |= 2;
-            if (scannerStalled) triggers |= 4;
-            if (corruption)    triggers |= 16;
-            
-            telemetry::g_failSafeTriggers.store(triggers, std::memory_order_relaxed);
-            
-            if (triggers != 0) {
-                // Exchange to only trigger emergency flush on state transition, mitigating loop storm
-                uint32_t prevState = telemetry::g_watchdogState.exchange(2, std::memory_order_relaxed);
-                if (prevState != 2) {
-                    TriggerEmergencyFlush();
-                }
-            } else {
-                telemetry::g_watchdogState.store(0, std::memory_order_relaxed);
-            }
-        }
-    });
-}
-
-void StopWatchdog() {
-    s_watchdogRunning.store(false, std::memory_order_relaxed);
-    if (s_watchdogThread.joinable()) {
-        s_watchdogThread.join();
-    }
-}
-
-void TriggerEmergencyFlush() {
-    static std::atomic<bool> s_inFlush{false};
-    if (s_inFlush.exchange(true)) return;
-    
-    InjectionBatch batch;
-    {
-        std::unique_lock<std::mutex> lock(s_stateMutex, std::try_to_lock);
-        for (int i = 0; i < 4; i++) {
-            Key k = static_cast<Key>(i);
-            batch.push(k, false);
-            timing::CancelTimer(k);
-            if (lock.owns_lock()) {
-                s_state.logical[i] = false;
-                s_state.expectedTimerId[ki(k)] = 0;
-            }
-        }
-        if (lock.owns_lock()) {
-            PublishEngineState();
-        }
-    }
-    batch.flush();
-    INPUT inpSpace = {};
-    inpSpace.type = INPUT_KEYBOARD;
-    inpSpace.ki.wVk = VK_SPACE;
-    inpSpace.ki.wScan = 0x39;
-    inpSpace.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-    SendInput(1, &inpSpace, sizeof(INPUT));
-    bhop::OnSpaceUp();
-    
-    // Defer Uninstall to main thread to avoid UnhookWindowsHookEx deadlock!
-    if (s_hwnd) {
-        PostMessage(s_hwnd, WM_EMERGENCY_UNHOOK, 0, 0);
-    }
-    
-    {
-        std::unique_lock<std::mutex> lock(s_stateMutex, std::try_to_lock);
-        if (lock.owns_lock()) {
-            s_state.suspended = true;
-            PublishEngineState();
-        }
-        s_suspendedAtomic.store(true, std::memory_order_release);
-    }
-    
-    telemetry::g_recoveryCount.fetch_add(1, std::memory_order_relaxed);
-    
-    s_inFlush.store(false);
-}
-#endif
 
 bool IsTimingWorkloadActive() {
     if (bhop::GetState() != bhop::State::Idle) {
@@ -396,11 +254,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     // Determine state machine state
     RuntimeState rState = RuntimeState::Detached;
-    uint32_t fsTriggers = telemetry::g_failSafeTriggers.load(std::memory_order_relaxed);
-    uint32_t wdState = telemetry::g_watchdogState.load(std::memory_order_relaxed);
-    if (fsTriggers != 0 || wdState == 2) {
-        rState = RuntimeState::FailSafe;
-    } else if (timingActive) {
+    if (timingActive) {
         rState = RuntimeState::ActiveTiming;
     } else if (out.runningGamesMask != 0 && out.hookInstalled) {
         rState = RuntimeState::Attached;
@@ -552,20 +406,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     memcpy(out.histOversleep, cachedHistOversleep, sizeof(out.histOversleep));
 #endif
 
-    // Thread Health and Watchdog snapshots
-#if MARCO_ENABLE_HEARTBEATS
-    out.threadHealthTiming = (telemetry::g_blockedTiming.load(std::memory_order_relaxed) ||
-                              (nowMs - telemetry::g_heartbeatTiming.load(std::memory_order_relaxed) < 1000));
-    out.threadHealthHook = (telemetry::g_blockedHook.load(std::memory_order_relaxed) ||
-                            (nowMs - telemetry::g_heartbeatHook.load(std::memory_order_relaxed) < 1000));
-    out.threadHealthScanner = (telemetry::g_blockedScanner.load(std::memory_order_relaxed) ||
-                               (nowMs - telemetry::g_heartbeatScanner.load(std::memory_order_relaxed) < 5000));
-    out.threadHealthTelemetry = (telemetry::g_blockedTelemetry.load(std::memory_order_relaxed) ||
-                                 (nowMs - telemetry::g_heartbeatTelemetry.load(std::memory_order_relaxed) < 2000));
-    out.watchdogState = telemetry::g_watchdogState.load(std::memory_order_relaxed);
-    out.failSafeTriggers = telemetry::g_failSafeTriggers.load(std::memory_order_relaxed);
-    out.recoveryCount = telemetry::g_recoveryCount.load(std::memory_order_relaxed);
-#endif
+
 }
 
 void SetHookInstalled(bool v) { s_hookInstalled = v; NotifyUI(); }

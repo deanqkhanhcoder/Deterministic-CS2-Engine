@@ -16,8 +16,6 @@ namespace cfg_rt {
     inline int    LATENCY_MARGIN_MS()     { return rcfg::Get().latencyMarginMs; }
     inline int    MIN_STOP_MS()           { return rcfg::Get().minStopMs; }
 
-    inline int    WATCHDOG_STUCK_MS()     { return rcfg::Get().watchdogStuckMs; }
-    inline int    MAX_SCALE_MS()          { return rcfg::Get().maxScaleMs; }
 }
 
 namespace engine {
@@ -55,6 +53,6 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs);
 
 bool OnLButtonDown();
 void OnLButtonUp();
-void CancelPendingShot();
+
 
 } // namespace engine

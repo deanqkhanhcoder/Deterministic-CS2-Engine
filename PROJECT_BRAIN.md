@@ -1,8 +1,8 @@
 # Marco Project Brain
 
-Date: 2026-05-30
-Version: V27.4
-Mode: Final Consolidation
+Date: 2026-06-01
+Version: V27.6
+Mode: Maturity & Observability Slimdown
 
 Tài liệu này là lõi trung tâm. 
 Bất kỳ AI nào làm việc với dự án này CHỈ CẦN đọc 2 file sau:
@@ -20,7 +20,7 @@ Bất kỳ AI nào làm việc với dự án này CHỈ CẦN đọc 2 file sau
 
 ## Current Status
 
-V27.5 RC1
+V27.6
 
 Source:
 CERTIFIED
@@ -29,7 +29,7 @@ Build:
 PASS
 
 Runtime:
-PENDING 3-7 DAY VALIDATION
+PENDING VALIDATION
 
 ## Current Bugs
 
@@ -43,25 +43,15 @@ PENDING 3-7 DAY VALIDATION
 
 ## Roadmap
 
-**V27.5 Hardening Execution (Current)**:
-1. Synchronous forensic flush was removed from hook/input focus paths.
-2. Forensic ring flush now snapshots under lock and writes after unlock.
-3. Watchdog health checks read published lock-free state instead of waiting on `s_stateMutex`.
-4. Movement LUT reload publishes immutable snapshots atomically.
-5. Resolver wakeups use `notify_all()` to avoid scanner/resolver signal theft.
-6. Emergency unhook and ETW UI error paths are routed through UI/message-thread handling.
-7. Known rotten unit tests were moved to current `movement::` APIs.
+**V27.6 Maturity & Observability Slimdown (COMPLETED)**:
+1. Purged Watchdog Architecture (heartbeats, fail-safe triggers, UI watchdog).
+2. Decoupled ForensicRingBuffer from MARCO_ENABLE_FORENSIC, keeping FOCUS/PROFILE events in production.
+3. Cleaned up obsolete files and dead code (e.g., `autofire_controller.cpp`, F8 tracking, `WM_TIMER_EXPIRED`).
+4. Retained WARN, ERROR, FATAL logging in Release builds.
 
 **Next**:
-1. Real gameplay validation for V27.5.
-2. Observability Slimdown after stability evidence: Release minimal telemetry; Debug/Profile full forensic.
-3. Architecture freeze only after runtime evidence.
-
-**V27.5 Mùa Dọn Dẹp (Sắp tới)**:
-1. Sửa toàn bộ BUG từ 002 đến 008.
-2. Xóa bỏ File Test cũ nát (`test_physics`, `test_hybrid`).
-3. Dọn code thừa `autofire_controller`.
-4. Triển khai "Observability Slimdown": loại bỏ Forensic Spams trên bản Release.
+1. Real gameplay validation for V27.6.
+2. Monitor production observability (focus/profile events).
 
 ---
 

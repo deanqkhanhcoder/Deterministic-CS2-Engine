@@ -73,11 +73,6 @@ struct RuntimeSnapshot {
     bool      smtCollision;
     uint32_t  affinityMode;
 
-    bool      threadHealthTiming;
-    bool      threadHealthHook;
-    bool      threadHealthScanner;
-    bool      threadHealthTelemetry;
-    uint32_t  watchdogState;
     uint32_t  failSafeTriggers;
     uint32_t  recoveryCount;
 
