@@ -124,9 +124,7 @@ static void UpdateAdaptiveController(int64_t oversleepUs) {
 
     s_adaptiveSpinTailUs.store(spinTail, std::memory_order_relaxed);
     s_adaptiveWakeMarginUs.store(wakeMargin, std::memory_order_relaxed);
-#if MARCO_ENABLE_FORENSIC
     telemetry::g_wakeVarianceUs.store((int64_t)s_varOversleepUs, std::memory_order_relaxed);
-#endif
 }
 
 static void TimerThreadFunc() {
@@ -148,12 +146,12 @@ static void TimerThreadFunc() {
         (void)procNumber;
         uint32_t prevCore = telemetry::g_activeTimingCore.exchange(procNumber, std::memory_order_relaxed);
         telemetry::g_activeTimingGroup.store(0, std::memory_order_relaxed);
-#if MARCO_ENABLE_FORENSIC
         if (prevCore != 0xFFFFFFFF && prevCore != procNumber) {
             telemetry::g_coreMigrations.fetch_add(1, std::memory_order_relaxed);
+#if MARCO_ENABLE_FORENSIC
             telemetry::g_eventBuffer.Push(5, procNumber, 3, (int32_t)prevCore); // EVENT_CORE_MIGRATION = 3
-        }
 #endif
+        }
 
         std::unique_lock<std::mutex> lock(s_spinlock);
         s_dirty.store(false, std::memory_order_relaxed);
@@ -252,6 +250,12 @@ static void TimerThreadFunc() {
             (void)jitter;
             int64_t oversleep = std::max(0LL, actualWakeUs - slot.expireUs);
 
+            if (oversleep > 1000) {
+                telemetry::g_schedulerSpikes.fetch_add(1, std::memory_order_relaxed);
+            }
+            int64_t peak = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
+            while (oversleep > peak && !telemetry::g_timerOversleepPeak.compare_exchange_weak(peak, oversleep, std::memory_order_relaxed));
+
 #if MARCO_ENABLE_FORENSIC
             telemetry::g_timerJitter.Add(jitter);
             telemetry::g_oversleep.Add(oversleep);
@@ -262,11 +266,8 @@ static void TimerThreadFunc() {
             telemetry::g_eventBuffer.Push(5, currentCore, 11, (int32_t)oversleep); // EVENT_TIMER_OVERSLEEP = 11
 
             if (oversleep > 1000) {
-                telemetry::g_schedulerSpikes.fetch_add(1, std::memory_order_relaxed);
                 telemetry::g_eventBuffer.Push(5, currentCore, 12, (int32_t)oversleep); // EVENT_SPIKE = 12
             }
-            int64_t peak = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
-            while (oversleep > peak && !telemetry::g_timerOversleepPeak.compare_exchange_weak(peak, oversleep, std::memory_order_relaxed));
 #endif
 
             // Update adaptive precision controller

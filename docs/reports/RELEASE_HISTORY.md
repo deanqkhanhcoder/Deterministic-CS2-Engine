@@ -8,6 +8,7 @@ Highlights:
 - Decoupled ForensicRingBuffer to persist focus tracking in production.
 - Kept WARN/ERROR/FATAL logging available in Release builds, omitting TRACE/INFO.
 - Cleaned up dead code (autofire, F8 tracking, unused build flags).
+- Repaired telemetry pipeline to expose thread health metrics in Release dashboard.
 - No gameplay behavior changes.
 
 Status:

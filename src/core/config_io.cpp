@@ -139,7 +139,6 @@ bool Load(RuntimeConfig& c) {
     c.minimizeToTray    = ReadInt(A, L"MinimizeToTray", c.minimizeToTray) != 0;
     c.dashboardRefreshMs= ReadInt(A, L"DashboardRefreshMs", c.dashboardRefreshMs);
     c.debugMode         = ReadBool(A, L"DebugMode", c.debugMode);
-    c.watchdogIntervalMs= std::clamp(ReadInt(A, L"WatchdogIntervalMs", c.watchdogIntervalMs), 10, 10000);
 
     const wchar_t* SM = L"SafeMode";
     c.safeModeEnabled    = ReadBool(SM, L"Enabled", c.safeModeEnabled);
@@ -220,7 +219,6 @@ bool Save(const RuntimeConfig& c) {
     WriteBool(A, L"MinimizeToTray", c.minimizeToTray);
     WriteInt(A, L"DashboardRefreshMs", c.dashboardRefreshMs);
     WriteBool(A, L"DebugMode", c.debugMode);
-    WriteInt(A, L"WatchdogIntervalMs", c.watchdogIntervalMs);
 
     const wchar_t* SM = L"SafeMode";
     WriteBool(SM, L"Enabled", c.safeModeEnabled);

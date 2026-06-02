@@ -112,7 +112,7 @@ RECT DrawPanel(HDC hdc, const RECT& pr, const wchar_t* title) {
 
         SetTextColor(hdc, theme::CLR_ACCENT);
         RECT rTitle = { pr.left + 12, pr.top + 6, pr.right - 12, pr.top + 6 + fontH };
-        DrawTextW(hdc, title, -1, &rTitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        DrawTextW(hdc, title, -1, &rTitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
         SelectObject(hdc, oldF);
 
         // Divider line under header
@@ -143,10 +143,10 @@ void DrawRow(HDC hdc, int x, int y, int w, int rowH,
     HFONT old = (HFONT)SelectObject(hdc, ui::GetBodyFont());
     SetTextColor(hdc, theme::FG_LABEL);
     RECT rl = { x, y, x + labelW, y + rowH };
-    DrawTextW(hdc, label, -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(hdc, label, -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SetTextColor(hdc, valClr);
     RECT rv = { x + labelW, y, x + w, y + rowH };
-    DrawTextW(hdc, value, -1, &rv, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(hdc, value, -1, &rv, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SelectObject(hdc, old);
 }
 
@@ -155,12 +155,12 @@ void DrawRowCustom(HDC hdc, int x, int y, int labelW, int valW, int rowH,
     HFONT old = (HFONT)SelectObject(hdc, ui::GetBodyFont());
     SetTextColor(hdc, theme::FG_LABEL);
     RECT rl = { x, y, x + labelW, y + rowH };
-    DrawTextW(hdc, label, -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(hdc, label, -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
 
     SelectObject(hdc, ui::GetSmallFont());
     SetTextColor(hdc, valClr);
     RECT rv = { x + labelW, y, x + labelW + valW, y + rowH };
-    DrawTextW(hdc, value, -1, &rv, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(hdc, value, -1, &rv, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SelectObject(hdc, old);
 }
 

@@ -18,7 +18,7 @@
 #include "input_capture.h"
 #include "bhop.h"
 #include "ui_main.h"
-#include "ui_diagnostics.h"
+
 #include "runtime_config.h"
 #include "config_io.h"
 #include "debug_logger.h"
@@ -289,15 +289,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         
         int64_t startUs = timing::NowUs();
 
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::StartDispatch();
-#endif
+
 #if MARCO_ENABLE_HEARTBEATS
         telemetry::g_blockedHook.store(false, std::memory_order_relaxed);
 #endif
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::g_uiHeartbeatUs.store(timing::NowUs(), std::memory_order_relaxed);
-#endif
+
 
         bool quit = false;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -314,9 +310,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             DLOG_WARN(Runtime, "DispatchMessage stalled for %lld us!", dispatchUs);
         }
 
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::EndDispatch();
-#endif
+
 
         if (quit) break;
     }

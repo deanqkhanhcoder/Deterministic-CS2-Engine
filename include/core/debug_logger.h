@@ -13,7 +13,6 @@ enum class Subsystem {
     Hook,
     Telemetry,
     UI,
-    Watchdog,
     Injection,
     Timing,
     ThreadHealth,

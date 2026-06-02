@@ -288,12 +288,12 @@ alignas(64) MetricBuffer g_oversleep;
 alignas(64) MetricBuffer g_spinDuration;
 alignas(64) MetricBuffer g_stateMutation;
 
+#endif // MARCO_ENABLE_FORENSIC
+
 alignas(64) std::atomic<uint32_t> g_schedulerSpikes{0};
 alignas(64) std::atomic<uint32_t> g_coreMigrations{0};
 alignas(64) std::atomic<int64_t> g_timerOversleepPeak{0};
 alignas(64) std::atomic<int64_t> g_wakeVarianceUs{0};
-
-#endif // MARCO_ENABLE_FORENSIC
 
 alignas(64) std::atomic<uint32_t> g_activeTimingGroup{0xFFFFFFFF};
 alignas(64) std::atomic<uint32_t> g_activeTimingCore{0xFFFFFFFF};

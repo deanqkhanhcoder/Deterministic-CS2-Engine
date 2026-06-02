@@ -13,9 +13,7 @@
 #include <cstdio>
 #include <string>
 #include <algorithm>
-#if MARCO_ENABLE_DIAGNOSTICS
-#include "ui_diagnostics.h"
-#endif
+
 #include "timing.h"
 
 namespace ui {
@@ -134,13 +132,7 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
     int statusPanelH = layout::PanelHeight(9 * rowH);
 
     // ── Pass 1: Measure ──
-#if MARCO_ENABLE_DIAGNOSTICS
-    uint64_t layoutStart = timing::NowUs();
-#endif
     DashboardLayout L = MeasureLayout(hdc);
-#if MARCO_ENABLE_DIAGNOSTICS
-    ui_diagnostics::TrackMeasureLayout(timing::NowUs() - layoutStart);
-#endif
 
     s_totalContentHeight = L.totalHeight;
 
@@ -227,7 +219,7 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
 
         // RIGHT: Active Weapon Profile & Movement Engine Tuning
         if (rightPanel.bottom >= rc.top && rightPanel.top <= rc.bottom) {
-            RECT rightInner = layout::DrawPanel(hdc, rightPanel, L"ACTIVE WEAPON & MOVEMENT TUNING");
+            RECT rightInner = layout::DrawPanel(hdc, rightPanel, L"WEAPON & MOVEMENT TUNING");
             {
             layout::ClipGuard panelClip(hdc, rightPanel);
             int py = rightInner.top;
@@ -293,17 +285,36 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
             
             // Strict 3-Column Grid
             int colWidth = innerW / 3;
-            int col2X = innerX + colWidth * 2;
+            int col1X = innerX;
+            int col2X = innerX + colWidth;
+            int col3X = innerX + colWidth * 2;
             
             int labelW = (int)(colWidth * 0.55f);
             int valW   = (int)(colWidth * 0.35f);
 
+            // Column 1
+            int py1 = innerY;
+            wchar_t spikesW[32]; swprintf_s(spikesW, L"%u", snap.schedulerSpikeCount);
+            layout::DrawRowCustom(hdc, col1X, py1, labelW, valW, rowH, L"Scheduler Spikes", spikesW, (snap.schedulerSpikeCount > 0) ? theme::CLR_WARN : theme::FG_VALUE); py1 += rowH;
+
+            wchar_t migrationsW[32]; swprintf_s(migrationsW, L"%u", snap.coreMigrationCount);
+            layout::DrawRowCustom(hdc, col1X, py1, labelW, valW, rowH, L"Core Migrations", migrationsW, (snap.coreMigrationCount > 0) ? theme::CLR_WARN : theme::FG_VALUE);
+
+            // Column 2
+            int py2 = innerY;
+            wchar_t oversleepW[32]; swprintf_s(oversleepW, L"%lld \x03BCs", (long long)snap.timerOversleepPeakUs);
+            layout::DrawRowCustom(hdc, col2X, py2, labelW, valW, rowH, L"Peak Oversleep", oversleepW, (snap.timerOversleepPeakUs > 50) ? theme::CLR_WARN : theme::FG_VALUE); py2 += rowH;
+
+            wchar_t varianceW[32]; swprintf_s(varianceW, L"%lld \x03BCs", (long long)snap.wakeVarianceUs);
+            layout::DrawRowCustom(hdc, col2X, py2, labelW, valW, rowH, L"Wake Variance", varianceW, (snap.wakeVarianceUs > 20) ? theme::CLR_WARN : theme::FG_VALUE);
+
+            // Column 3
             int py3 = innerY;
             wchar_t triggersW[32]; swprintf_s(triggersW, L"0x%X", snap.failSafeTriggers);
-            layout::DrawRowCustom(hdc, col2X, py3, labelW, valW, rowH, L"Fail-Safe Flags", triggersW, (snap.failSafeTriggers != 0) ? theme::CLR_WARN : theme::FG_VALUE); py3 += rowH;
+            layout::DrawRowCustom(hdc, col3X, py3, labelW, valW, rowH, L"Fail-Safe Flags", triggersW, (snap.failSafeTriggers != 0) ? theme::CLR_WARN : theme::FG_VALUE); py3 += rowH;
             
             wchar_t recoveryW[32]; swprintf_s(recoveryW, L"%u", snap.recoveryCount);
-            layout::DrawRowCustom(hdc, col2X, py3, labelW, valW, rowH, L"Recovery Count", recoveryW, (snap.recoveryCount > 0) ? theme::CLR_WARN : theme::FG_VALUE);
+            layout::DrawRowCustom(hdc, col3X, py3, labelW, valW, rowH, L"Recovery Count", recoveryW, (snap.recoveryCount > 0) ? theme::CLR_WARN : theme::FG_VALUE);
             }
         }
         y += threadHealthH + theme::GROUP_PAD;
@@ -312,9 +323,7 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
     // ════════════════════════════════════════════════════════════════
     //  SCROLLBAR (renders in viewport coordinates, NOT virtual)
     // ════════════════════════════════════════════════════════════════
-#if MARCO_ENABLE_DIAGNOSTICS
-    ui_diagnostics::SetDashboardScrollState(s_scrollY, s_viewportHeight, s_totalContentHeight);
-#endif
+
     PaintScrollbar(hdc, rc);
 }
 

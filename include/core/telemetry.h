@@ -199,12 +199,12 @@ alignas(64) extern MetricBuffer g_oversleep;
 alignas(64) extern MetricBuffer g_spinDuration;
 alignas(64) extern MetricBuffer g_stateMutation;
 
+#endif // MARCO_ENABLE_FORENSIC
+
 alignas(64) extern std::atomic<uint32_t> g_schedulerSpikes;
 alignas(64) extern std::atomic<uint32_t> g_coreMigrations;
 alignas(64) extern std::atomic<int64_t> g_timerOversleepPeak;
 alignas(64) extern std::atomic<int64_t> g_wakeVarianceUs;
-
-#endif // MARCO_ENABLE_FORENSIC
 
 
 

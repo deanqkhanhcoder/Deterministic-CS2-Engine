@@ -29,7 +29,7 @@ Build:
 PASS
 
 Runtime:
-PENDING VALIDATION
+Stable Development Baseline
 
 ## Current Bugs
 
@@ -48,6 +48,8 @@ PENDING VALIDATION
 2. Decoupled ForensicRingBuffer from MARCO_ENABLE_FORENSIC, keeping FOCUS/PROFILE events in production.
 3. Cleaned up obsolete files and dead code (e.g., `autofire_controller.cpp`, F8 tracking, `WM_TIMER_EXPIRED`).
 4. Retained WARN, ERROR, FATAL logging in Release builds.
+5. RC Cleanup: Removed all ghost macros, dead diagnostic UI files, and stale configuration fields.
+6. Telemetry Repair: Fixed missing thread health metrics in Release builds by decoupling them from forensic tracing.
 
 **Next**:
 1. Real gameplay validation for V27.6.

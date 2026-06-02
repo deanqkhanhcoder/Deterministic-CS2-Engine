@@ -41,7 +41,7 @@ RELEASE_LDLIBS   = $(BASE_LDLIBS)
 RELEASE_OUT      = runtime/bin/marco.exe
 RELEASE_OBJDIR   = build/obj/release
 # Exclude ETW, Forensic Dashboards, Diagnostics, Toolkit
-RELEASE_EXCLUDE  = src/core/etw_controller.cpp src/ui/ui_diagnostics.cpp src/ui/ui_analysis.cpp src/core/analysis_toolkit.cpp
+RELEASE_EXCLUDE  = src/core/etw_controller.cpp src/ui/ui_analysis.cpp src/core/analysis_toolkit.cpp
 RELEASE_SRCS     = $(filter-out $(RELEASE_EXCLUDE),$(wildcard src/core/*.cpp src/ui/*.cpp))
 RELEASE_OBJS     = $(patsubst src/%.cpp,$(RELEASE_OBJDIR)/%.o,$(RELEASE_SRCS))
 

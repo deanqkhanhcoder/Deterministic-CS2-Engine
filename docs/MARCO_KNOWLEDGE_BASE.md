@@ -30,7 +30,7 @@ Khác với AHK cũ, C++ BHOP dùng worker thread riêng biệt. SpaceDown báo 
 Sử dụng mô hình Seqlock (Write-Release / Read-Acquire) để cấu hình có thể cập nhật từ UI Thread mà không cần khóa Mutex cản trở Hook Thread hay Timer Thread.
 
 ## 8. Telemetry / Forensic Architecture
-Hệ thống sử dụng Ring Buffer lock-free. Sự kiện vòng đời (Focus, Profile) và lỗi logic (`BHOP_STALL`, `COUNTERSTRAFE_CONFLICT`) được đẩy liên tục vào `ForensicRingBuffer`. Kể từ V27.6, Watchdog đã bị xóa bỏ hoàn toàn để giảm footprint, và Forensic được decouple để chạy cả trên Release build nhằm theo dõi Focus Event.
+Hệ thống sử dụng Ring Buffer lock-free. Sự kiện vòng đời (Focus, Profile) và lỗi logic (`BHOP_STALL`, `COUNTERSTRAFE_CONFLICT`) được đẩy liên tục vào `ForensicRingBuffer`. Kể từ V27.6, Watchdog đã bị xóa bỏ hoàn toàn để giảm footprint, và Forensic được decouple để chạy cả trên Release build nhằm theo dõi Focus Event. Đồng thời, Runtime Health Metrics (Scheduler Spikes, Core Migrations, v.v.) đã được tách khỏi Forensic Pipeline để hiển thị trên Release Dashboard mà không kéo theo overhead của ring buffer.
 
 ## 9. Directory Structure
 - `src/core/`, `src/ui/`: Logic lõi và Giao diện.
@@ -113,8 +113,9 @@ Status vocabulary for this pass:
 
 **V27.6 Maturity Update**:
 - Removed Watchdog Architecture (fixes BUG-008, BUG-010). UI Watchdog also removed.
-- Cleaned up `autofire_controller` (dead code), F8 tracking, and `WM_TIMER_EXPIRED`.
+- Cleaned up `autofire_controller` (dead code), F8 tracking, and `WM_TIMER_EXPIRED` (including stale header documentation).
 - Decoupled `ForensicRingBuffer` from `MARCO_ENABLE_FORENSIC` for production observability, preserving WARN/ERROR/FATAL logging in Release builds.
+- RC Cleanup: Removed ghost diagnostic macros (`MARCO_ENABLE_DIAGNOSTICS`), dead UI files, and stale configuration fields (`watchdogIntervalMs`).
 
 ## 17. Technical Debt
 

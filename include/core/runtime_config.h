@@ -43,8 +43,7 @@ struct RuntimeConfig {
     double physStopSpeed     = 80.0;
     double physAccelerate    = 5.5;
 
-    // Watchdog
-    int    watchdogIntervalMs= 10000;
+
     int    watchdogStuckMs   = 500;
 
     // Conflict penalty

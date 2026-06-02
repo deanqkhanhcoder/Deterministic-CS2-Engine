@@ -270,6 +270,11 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.smtCollision = (tGroup != 0xFFFFFFFF && hGroup != 0xFFFFFFFF) && topology::AreSmtSiblings(tGroup, tCore, hGroup, hCore);
     out.affinityMode = telemetry::g_affinityMode.load(std::memory_order_relaxed);
 
+    out.schedulerSpikeCount = telemetry::g_schedulerSpikes.load(std::memory_order_relaxed);
+    out.coreMigrationCount = telemetry::g_coreMigrations.load(std::memory_order_relaxed);
+    out.timerOversleepPeakUs = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
+    out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
+
 #if MARCO_ENABLE_FORENSIC
     // Persistent static caches for timing telemetry
     static int64_t cachedTimerJitterUs = 0;
@@ -311,11 +316,6 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     int64_t stateMutationP50 = 0, stateMutationP99 = 0, stateMutationAvg = 0;
     telemetry::g_stateMutation.GetStats(stateMutationP50, stateMutationP99, stateMutationAvg);
     out.stateMutationLatencyUs = stateMutationP50;
-
-    out.schedulerSpikeCount = telemetry::g_schedulerSpikes.load(std::memory_order_relaxed);
-    out.coreMigrationCount = telemetry::g_coreMigrations.load(std::memory_order_relaxed);
-    out.timerOversleepPeakUs = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
-    out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
 
     // Maintain rolling timeline in TakeSnapshot
     if (timingActive) {

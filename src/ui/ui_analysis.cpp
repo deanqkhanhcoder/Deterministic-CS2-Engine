@@ -141,7 +141,7 @@ static void PaintPanelFrame(HDC hdc, RECT r, const wchar_t* title) {
         SetTextColor(hdc, theme::CLR_ACCENT);
         RECT titleR = { r.left + theme::PANEL_PAD, r.top + 3,
                         r.right - theme::PANEL_PAD, r.top + theme::PANEL_HEADER_H };
-        DrawTextW(hdc, title, -1, &titleR, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        DrawTextW(hdc, title, -1, &titleR, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
         SelectObject(hdc, old);
 
         // Separator line under header
@@ -159,10 +159,10 @@ static void DrawRow(HDC hdc, int x, int y, int w, int rowH,
     SetTextColor(hdc, theme::FG_LABEL);
     int labelW = 220;
     RECT rl = {x, y, x + labelW, y + rowH};
-    DrawTextW(hdc, label, -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(hdc, label, -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SetTextColor(hdc, valClr);
     RECT rv = {x + labelW, y, x + w, y + rowH};
-    DrawTextW(hdc, value, -1, &rv, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(hdc, value, -1, &rv, DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
     SelectObject(hdc, old);
 }
 
@@ -171,7 +171,7 @@ static void DrawSectionHeader(HDC hdc, int x, int y, int w, const wchar_t* title
     HFONT old = (HFONT)SelectObject(hdc, ui::GetSmallFont());
     SetTextColor(hdc, theme::CLR_ACCENT);
     RECT r = {x, y, x + w, y + 16};
-    DrawTextW(hdc, title, -1, &r, DT_LEFT | DT_SINGLELINE);
+    DrawTextW(hdc, title, -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(hdc, old);
 
     HPEN oldP = (HPEN)SelectObject(hdc, s_sepPen);
@@ -301,12 +301,12 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
         HFONT old = (HFONT)SelectObject(hdc, ui::GetBodyFont());
         SetTextColor(hdc, theme::FG_LABEL);
         RECT rl = {x, y, x + w, y + rowH};
-        DrawTextW(hdc, L"Regression State:", -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        DrawTextW(hdc, L"Regression State:", -1, &rl, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
         y += rowH;
 
         SetTextColor(hdc, s_compareColor);
         RECT rv = {x, y, x + w, y + rowH * 2};
-        DrawTextW(hdc, s_compareStatus, -1, &rv, DT_LEFT | DT_WORDBREAK);
+        DrawTextW(hdc, s_compareStatus, -1, &rv, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
         SelectObject(hdc, old);
     }
     y += rowH * 2 + theme::GROUP_PAD;
@@ -351,10 +351,10 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
                 RECT rC2 = {x + 50, y + 3, x + 250, y + 20};
                 RECT rC3 = {x + 260, y + 3, x + 340, y + 20};
                 RECT rC4 = {x + 350, y + 3, x + 430, y + 20};
-                DrawTextW(hdc, L"#", -1, &rC1, DT_LEFT | DT_SINGLELINE);
-                DrawTextW(hdc, L"Driver Module", -1, &rC2, DT_LEFT | DT_SINGLELINE);
-                DrawTextW(hdc, L"DPC Count", -1, &rC3, DT_RIGHT | DT_SINGLELINE);
-                DrawTextW(hdc, L"ISR Count", -1, &rC4, DT_RIGHT | DT_SINGLELINE);
+                DrawTextW(hdc, L"#", -1, &rC1, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(hdc, L"Driver Module", -1, &rC2, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(hdc, L"DPC Count", -1, &rC3, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(hdc, L"ISR Count", -1, &rC4, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
                 SelectObject(hdc, old);
             }
             y += 24;
@@ -386,10 +386,10 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
                 RECT rC3 = {x + 260, y + 2, x + 340, y + 18};
                 RECT rC4 = {x + 350, y + 2, x + 430, y + 18};
                 
-                DrawTextW(hdc, b1, -1, &rC1, DT_LEFT | DT_SINGLELINE);
-                DrawTextW(hdc, o.driverName, -1, &rC2, DT_LEFT | DT_SINGLELINE);
-                DrawTextW(hdc, b3, -1, &rC3, DT_RIGHT | DT_SINGLELINE);
-                DrawTextW(hdc, b4, -1, &rC4, DT_RIGHT | DT_SINGLELINE);
+                DrawTextW(hdc, b1, -1, &rC1, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(hdc, o.driverName, -1, &rC2, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(hdc, b3, -1, &rC3, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(hdc, b4, -1, &rC4, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
 
                 y += 18;
             }
@@ -432,42 +432,42 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
             // Panel 1: Hook Latency
             SetTextColor(hdc, theme::CLR_ACCENT);
             RECT rText = { rp1.left, rp1.top, rp1.right, rp1.top + 20 };
-            DrawTextW(hdc, L"INPUT HOOK LATENCY", -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, L"INPUT HOOK LATENCY", -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
             SetTextColor(hdc, theme::FG_VALUE);
             wsprintfW(valW1, L"p50: %d.%01d µs", (int)(snap.hookLatencyP50Us / 10), (int)(snap.hookLatencyP50Us % 10));
             wsprintfW(valW2, L"p99: %d.%01d µs", (int)(snap.hookLatencyP99Us / 10), (int)(snap.hookLatencyP99Us % 10));
             rText.top += 18; rText.bottom += 18;
-            DrawTextW(hdc, valW1, -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, valW1, -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
             rText.top += 16; rText.bottom += 16;
-            DrawTextW(hdc, valW2, -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, valW2, -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
 
             // Panel 2: Timer Jitter
             SelectObject(hdc, ui::GetBodyFont());
             SetTextColor(hdc, theme::CLR_ACCENT);
             rText = { rp2.left, rp2.top, rp2.right, rp2.top + 20 };
-            DrawTextW(hdc, L"TIMER JITTER", -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, L"TIMER JITTER", -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
             SetTextColor(hdc, theme::FG_VALUE);
             SelectObject(hdc, ui::GetSmallFont());
             wsprintfW(valW1, L"p50: %d.%01d µs", (int)(snap.timerJitterUs / 10), (int)(snap.timerJitterUs % 10));
             wsprintfW(valW2, L"Spin: %d.%01d µs", (int)(snap.spinDurationUs / 10), (int)(snap.spinDurationUs % 10));
             rText.top += 18; rText.bottom += 18;
-            DrawTextW(hdc, valW1, -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, valW1, -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
             rText.top += 16; rText.bottom += 16;
-            DrawTextW(hdc, valW2, -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, valW2, -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
 
             // Panel 3: Wake Oversleep
             SelectObject(hdc, ui::GetBodyFont());
             SetTextColor(hdc, theme::CLR_ACCENT);
             rText = { rp3.left, rp3.top, rp3.right, rp3.top + 20 };
-            DrawTextW(hdc, L"WAKE OVERSLEEP", -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, L"WAKE OVERSLEEP", -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
             SetTextColor(hdc, theme::FG_VALUE);
             SelectObject(hdc, ui::GetSmallFont());
             wsprintfW(valW1, L"p50: %d.%01d µs", (int)(snap.wakeOversleepUs / 10), (int)(snap.wakeOversleepUs % 10));
             wsprintfW(valW2, L"Peak: %d.%01d µs", (int)(snap.timerOversleepPeakUs / 10), (int)(snap.timerOversleepPeakUs % 10));
             rText.top += 18; rText.bottom += 18;
-            DrawTextW(hdc, valW1, -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, valW1, -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
             rText.top += 16; rText.bottom += 16;
-            DrawTextW(hdc, valW2, -1, &rText, DT_CENTER | DT_SINGLELINE);
+            DrawTextW(hdc, valW2, -1, &rText, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX);
 
             SelectObject(hdc, oldFont);
         }
@@ -592,13 +592,13 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
                 SetBkMode(hdc, TRANSPARENT);
                 RECT rLine1 = rBox;
                 rLine1.bottom = rBox.top + 22;
-                DrawTextW(hdc, line1, -1, &rLine1, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(hdc, line1, -1, &rLine1, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
                 SelectObject(hdc, ui::GetSmallFont());
                 SetTextColor(hdc, theme::FG_DIM);
                 RECT rLine2 = rBox;
                 rLine2.top = rBox.top + 22;
-                DrawTextW(hdc, line2, -1, &rLine2, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                DrawTextW(hdc, line2, -1, &rLine2, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
                 SelectObject(hdc, oldF);
             }
@@ -648,7 +648,7 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
                 // Hook Latency Row
                 SetTextColor(hdc, theme::FG_LABEL);
                 RECT rBin = { xLeft, yRow, xLeft + 50, yRow + histRowH };
-                DrawTextW(hdc, binsHook[row], -1, &rBin, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                DrawTextW(hdc, binsHook[row], -1, &rBin, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
                 RECT rBar = { xLeft + 54, yRow + 2, xLeft + histColW - 8, yRow + histRowH - 2 };
                 FrameRect(hdc, &rBar, (HBRUSH)GetStockObject(GRAY_BRUSH));
                 int pctHook = 0;
@@ -661,7 +661,7 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
                 // Jitter Row
                 int xJitterCol = xLeft + histColW;
                 rBin = { xJitterCol, yRow, xJitterCol + 45, yRow + histRowH };
-                DrawTextW(hdc, binsJitter[row], -1, &rBin, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                DrawTextW(hdc, binsJitter[row], -1, &rBin, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
                 rBar = { xJitterCol + 48, yRow + 2, xJitterCol + histColW - 8, yRow + histRowH - 2 };
                 FrameRect(hdc, &rBar, (HBRUSH)GetStockObject(GRAY_BRUSH));
                 int pctJitter = 0;
@@ -674,7 +674,7 @@ static int PaintForensicContent(HDC hdc, RECT panelRect, int scrollY, int rowH, 
                 // Oversleep Row
                 int xOversleepCol = xLeft + histColW * 2;
                 rBin = { xOversleepCol, yRow, xOversleepCol + 50, yRow + histRowH };
-                DrawTextW(hdc, binsOversleep[row], -1, &rBin, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                DrawTextW(hdc, binsOversleep[row], -1, &rBin, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
                 rBar = { xOversleepCol + 56, yRow + 2, xOversleepCol + histColW - 8, yRow + histRowH - 2 };
                 FrameRect(hdc, &rBar, (HBRUSH)GetStockObject(GRAY_BRUSH));
                 int pctOversleep = 0;

@@ -26,9 +26,6 @@
 #if MARCO_ENABLE_FORENSIC_UI
 #include "ui_analysis.h"
 #endif
-#if MARCO_ENABLE_DIAGNOSTICS
-#include "ui_diagnostics.h"
-#endif
 
 // MinGW: link comctl32, shell32 via build command
 
@@ -245,18 +242,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 #endif
     switch (msg) {
     case WM_PAINT: {
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::StartPaint();
-#endif
         engine::dbgLastRenderUs.store(timing::NowUs(), std::memory_order_relaxed);
         engine::dbgRenderCount.fetch_add(1, std::memory_order_relaxed);
 
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         if (!hdc) {
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::EndPaint();
-#endif
             return 0;
         }
 
@@ -388,25 +379,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         EndPaint(hwnd, &ps);
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::EndPaint();
-#endif
         return 0;
     }
 
     case WM_TIMER: {
         // Dashboard refresh timer (fallback heartbeat)
         if (wParam == 42) {
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::g_uiHeartbeatUs.store(timing::NowUs(), std::memory_order_relaxed);
-#endif
             engine::TakeSnapshot(s_snap);
             if (s_visible && !IsIconic(hwnd)) {
-#if MARCO_ENABLE_DIAGNOSTICS
-                ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
                 InvalidateRect(hwnd, nullptr, FALSE);
-#endif
             }
         }
         return 0;
@@ -426,11 +407,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     ui_analysis::ResetScroll();
                 }
 #endif
-#if MARCO_ENABLE_DIAGNOSTICS
-                ui_diagnostics::TrackInvalidate(hwnd, nullptr, TRUE);
-#else
                 InvalidateRect(hwnd, nullptr, TRUE);
-#endif
             }
             return 0;
         }
@@ -484,11 +461,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (s_visible && !IsIconic(hwnd)) {
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
             UpdateWindow(hwnd);
         }
         return 0;
@@ -572,33 +545,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 #if MARCO_ENABLE_FORENSIC_UI || MARCO_ENABLE_RELEASE_DASHBOARD
         if (s_activeTab == theme::TAB_DASHBOARD) {
             ui_dash::OnMouseWheel(delta);
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackScroll();
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
         }
 #endif
 #if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
         if (s_activeTab == theme::TAB_ANALYSIS) {
             ui_analysis::OnMouseWheel(delta);
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackScroll();
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
         }
 #endif
         if (s_activeTab == theme::TAB_SETTINGS) {
             ui_sett::OnMouseWheel(delta);
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackScroll();
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
         }
         return 0;
     }

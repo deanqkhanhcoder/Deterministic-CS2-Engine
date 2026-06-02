@@ -186,12 +186,12 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     uint32_t procNumber = GetCurrentProcessorNumber();
     uint32_t prevCore = telemetry::g_activeHookCore.exchange(procNumber, std::memory_order_relaxed);
     (void)prevCore;
-#if MARCO_ENABLE_FORENSIC
     if (prevCore != 0xFFFFFFFF && prevCore != procNumber) {
         telemetry::g_coreMigrations.fetch_add(1, std::memory_order_relaxed);
+#if MARCO_ENABLE_FORENSIC
         telemetry::g_eventBuffer.Push(5, procNumber, 3, (int32_t)prevCore); // EVENT_CORE_MIGRATION = 3
-    }
 #endif
+    }
 
     if (nCode < 0) return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
 
@@ -400,12 +400,12 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     uint32_t procNumber = GetCurrentProcessorNumber();
     uint32_t prevCore = telemetry::g_activeHookCore.exchange(procNumber, std::memory_order_relaxed);
     (void)prevCore;
-#if MARCO_ENABLE_FORENSIC
     if (prevCore != 0xFFFFFFFF && prevCore != procNumber) {
         telemetry::g_coreMigrations.fetch_add(1, std::memory_order_relaxed);
+#if MARCO_ENABLE_FORENSIC
         telemetry::g_eventBuffer.Push(5, procNumber, 3, (int32_t)prevCore); // EVENT_CORE_MIGRATION = 3
-    }
 #endif
+    }
 
     if (nCode < 0) return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
 
