@@ -4,12 +4,12 @@ Tài liệu này liệt kê cấu trúc tài liệu hiện tại sau đợt Cons
 
 ## Core Documentation (Single Source of Truth)
 
-- [Project Brain](../PROJECT_BRAIN.md) (Roadmap & Status)
-- [Marco Knowledge Base](MARCO_KNOWLEDGE_BASE.md) (Kiến trúc, Thread Model, Bug Registry)
+- [Project Brain](../../../PROJECT_BRAIN.md) (Roadmap & Status)
+- [Marco Knowledge Base](../../MARCO_KNOWLEDGE_BASE.md) (Kiến trúc, Thread Model, Bug Registry)
 
 ## Consolidation Reports
 
-- [Documentation Consolidation Report](reports/DOCUMENTATION_CONSOLIDATION_REPORT.md)
+- [Documentation Consolidation Report](DOCUMENTATION_CONSOLIDATION_REPORT.md)
 
 ## Historical Archives
 

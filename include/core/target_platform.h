@@ -18,9 +18,10 @@ enum CapabilityFlags : uint32_t {
 };
 
 enum GameMask : uint32_t {
-    MASK_NONE   = 0,
-    MASK_CS2    = 1 << 0,
-    MASK_ROBLOX = 1 << 1
+    MASK_NONE      = 0,
+    MASK_CS2       = 1 << 0,
+    MASK_ROBLOX    = 1 << 1,
+    MASK_VALORANT  = 1 << 2
 };
 
 struct TargetProfile {

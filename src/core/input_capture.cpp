@@ -27,7 +27,7 @@ static HWND  s_hwnd         = nullptr;
 
 // --- Target Identity Tracking ---
 static target_platform::TargetIdentity s_cachedIdentity;
-static bool s_wasTargetActive = false;
+static std::atomic<bool> s_wasTargetActive{false};
 static std::atomic<HWND> s_activeHwnd{nullptr};
 
 static HWINEVENTHOOK s_winEventHook = nullptr;
@@ -85,19 +85,45 @@ static void ReconcileSwallow() {
 }
 
 static std::mutex s_focusMutex;
+static std::atomic<HWND> s_lastEvaluatedFg{nullptr};
 
 static bool IsTargetActive() {
-    std::lock_guard<std::mutex> lock(s_focusMutex);
     HWND fg = SampleForegroundWindow();
     if (!fg) return false;
-
-    static HWND s_lastEvaluatedFg = nullptr;
 
     auto pub = target_platform::GetCurrentIdentity();
     bool isActive = (fg == pub.hwnd && pub.hwnd != nullptr);
 
-    if (fg != s_lastEvaluatedFg) {
-        s_lastEvaluatedFg = fg;
+    // Fast path: Avoid lock contention (Priority Inversion) if state hasn't changed
+    bool wasActive = s_wasTargetActive.load(std::memory_order_acquire);
+    if (isActive == wasActive) {
+        HWND lastFg = s_lastEvaluatedFg.load(std::memory_order_relaxed);
+        if (fg != lastFg) {
+            s_lastEvaluatedFg.store(fg, std::memory_order_relaxed);
+            target_platform::TargetIdentity currentId = target_platform::TargetIdentity::FromWindow(fg);
+            s_cachedIdentity = currentId;
+            if (!isActive) {
+                target_platform::ResolveTargetAsync(currentId);
+            }
+        }
+        return isActive;
+    }
+
+    // Try to acquire the lock. If another thread is reconciling, let them finish.
+    std::unique_lock<std::mutex> lock(s_focusMutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return isActive;
+    }
+
+    // Check again under lock
+    wasActive = s_wasTargetActive.load(std::memory_order_relaxed);
+    if (isActive == wasActive) {
+        return isActive;
+    }
+
+    HWND lastFg = s_lastEvaluatedFg.load(std::memory_order_relaxed);
+    if (fg != lastFg) {
+        s_lastEvaluatedFg.store(fg, std::memory_order_relaxed);
         target_platform::TargetIdentity currentId = target_platform::TargetIdentity::FromWindow(fg);
         s_cachedIdentity = currentId;
         if (!isActive) {
@@ -112,13 +138,13 @@ static bool IsTargetActive() {
     auto currentId = s_cachedIdentity;
     (void)currentId;
 
+    bool didLoseFocus = false;
+    bool didRegainFocus = false;
+
     // --- Unified Focus Reconciliation ---
-    if (s_wasTargetActive && !isActive) {
-        s_wasTargetActive = isActive;
-        DLOG_WARN(Hook, "Target focus LOST [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
-        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, false };
-        telemetry::g_forensicBuffer.Push(ev);
-        telemetry::RequestForensicFlush();
+    if (wasActive && !isActive) {
+        s_wasTargetActive.store(false, std::memory_order_release);
+        didLoseFocus = true;
         engine::ClearHeldKeys();
         bhop::OnSpaceUp();
         s_spaceSwallowed = false; // Explicit swallow release
@@ -127,12 +153,9 @@ static bool IsTargetActive() {
         }
         s_physSpaceDown = false;
         s_hkDownF1 = s_hkDownF2 = s_hkDownF3 = s_hkDownF6 = false; // Clear global hotkey states on focus loss
-    } else if (!s_wasTargetActive && isActive) {
-        s_wasTargetActive = isActive;
-        DLOG_WARN(Hook, "Target focus REGAINED [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
-        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, true };
-        telemetry::g_forensicBuffer.Push(ev);
-        telemetry::RequestForensicFlush();
+    } else if (!wasActive && isActive) {
+        s_wasTargetActive.store(true, std::memory_order_release);
+        didRegainFocus = true;
         
         // Sync local space state with actual hardware truth
         s_physSpaceDown = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
@@ -155,8 +178,20 @@ static bool IsTargetActive() {
         } else {
             s_spaceSwallowed = false;
         }
-    } else {
-        s_wasTargetActive = isActive;
+    }
+
+    lock.unlock(); // Release lock before heavy logging
+
+    if (didLoseFocus) {
+        DLOG_WARN(Hook, "Target focus LOST [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, false };
+        telemetry::g_forensicBuffer.Push(ev);
+        telemetry::RequestForensicFlush();
+    } else if (didRegainFocus) {
+        DLOG_WARN(Hook, "Target focus REGAINED [HWND:%p PID:%lu]", reinterpret_cast<int64_t>(currentId.hwnd), static_cast<int64_t>(currentId.pid));
+        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, true };
+        telemetry::g_forensicBuffer.Push(ev);
+        telemetry::RequestForensicFlush();
     }
 
     return isActive;

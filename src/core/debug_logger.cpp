@@ -31,11 +31,18 @@ static void LogWorker() {
             if (!s_running && s_logQueue.empty()) break;
             localQueue.swap(s_logQueue);
         }
-        if (s_logFile && !localQueue.empty()) {
+        if (!localQueue.empty()) {
             for (const auto& msg : localQueue) {
-                fprintf(s_logFile, "%s\n", msg.c_str());
+                if (s_logFile) {
+                    fprintf(s_logFile, "%s\n", msg.c_str());
+                }
+                char dbgBuf[1200];
+                snprintf(dbgBuf, sizeof(dbgBuf), "[MARCO] %s\n", msg.c_str());
+                OutputDebugStringA(dbgBuf);
             }
-            fflush(s_logFile);
+            if (s_logFile) {
+                fflush(s_logFile);
+            }
         }
         localQueue.clear();
     }
@@ -81,10 +88,6 @@ void Write(Subsystem sys, Level lvl, const char* file, int line, const char* fmt
         s_logQueue.emplace_back(fullMsg);
     }
     s_logCv.notify_one();
-    
-    char dbgBuf[1200];
-    snprintf(dbgBuf, sizeof(dbgBuf), "[MARCO] %s\n", buffer);
-    OutputDebugStringA(dbgBuf);
 }
 
 void Flush() {

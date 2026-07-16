@@ -275,7 +275,6 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.timerOversleepPeakUs = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
     out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
 
-#if MARCO_ENABLE_FORENSIC
     // Persistent static caches for timing telemetry
     static int64_t cachedTimerJitterUs = 0;
     static int64_t cachedWakeOversleepUs = 0;
@@ -404,7 +403,6 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     memcpy(out.histJitter, cachedHistJitter, sizeof(out.histJitter));
     memcpy(out.histOversleep, cachedHistOversleep, sizeof(out.histOversleep));
-#endif
 
 
 }

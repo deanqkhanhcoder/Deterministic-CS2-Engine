@@ -1,8 +1,8 @@
 # Marco Project Brain
 
 Date: 2026-06-01
-Version: V27.6
-Mode: Maturity & Observability Slimdown
+Version: V27.7
+Mode: Focus-Storm Hardening
 
 Tài liệu này là lõi trung tâm. 
 Bất kỳ AI nào làm việc với dự án này CHỈ CẦN đọc 2 file sau:
@@ -20,7 +20,7 @@ Bất kỳ AI nào làm việc với dự án này CHỈ CẦN đọc 2 file sau
 
 ## Current Status
 
-V27.6
+V27.7
 
 Source:
 CERTIFIED
@@ -51,8 +51,12 @@ Stable Development Baseline
 5. RC Cleanup: Removed all ghost macros, dead diagnostic UI files, and stale configuration fields.
 6. Telemetry Repair: Fixed missing thread health metrics in Release builds by decoupling them from forensic tracing.
 
+**V27.7 Focus-Storm Hardening (COMPLETED)**:
+1. Eliminated DispatchMessage stalls during rapid focus flapping by making `OutputDebugStringA` asynchronous in `LogWorker`.
+2. Reduced `s_focusMutex` lock contention by collecting focus transition state and executing heavy logging / telemetry emissions outside the critical section in `IsTargetActive()`.
+
 **Next**:
-1. Real gameplay validation for V27.6.
+1. Real gameplay validation for V27.7.
 2. Monitor production observability (focus/profile events).
 
 ---

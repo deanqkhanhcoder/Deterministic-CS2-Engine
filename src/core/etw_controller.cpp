@@ -50,7 +50,7 @@ bool StartGlobalTrace() {
     // Enable DPC and Interrupt tracing only
     props->EnableFlags = EVENT_TRACE_FLAG_DPC | EVENT_TRACE_FLAG_INTERRUPT;
     
-    props->LogFileMode = EVENT_TRACE_FILE_MODE_SEQUENTIAL;
+    props->LogFileMode = EVENT_TRACE_FILE_MODE_CIRCULAR;
     props->MaximumFileSize = 100; // 100 MB max
     props->MinimumBuffers = 16;
     props->MaximumBuffers = 64;

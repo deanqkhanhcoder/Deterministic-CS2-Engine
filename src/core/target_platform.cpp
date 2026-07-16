@@ -21,6 +21,13 @@ static const TargetProfile CS2_PROFILE = {
     CAP_BHOP | CAP_CSTRAFE | CAP_SCROLL
 };
 
+static const TargetProfile VALORANT_PROFILE = {
+    L"Valorant",
+    {},
+    L"VALORANT-Win64-Shipping.exe",
+    CAP_BHOP | CAP_CSTRAFE | CAP_SCROLL
+};
+
 static const TargetProfile ROBLOX_PROFILE = {
     L"Roblox",
     {L"WINDOWSCLIENT"},
@@ -30,6 +37,7 @@ static const TargetProfile ROBLOX_PROFILE = {
 
 static const TargetProfile* s_registeredProfiles[] = {
     &CS2_PROFILE,
+    &VALORANT_PROFILE,
     &ROBLOX_PROFILE
 };
 
@@ -307,6 +315,9 @@ void ProcessScannerWorker() {
                 do {
                     if (_wcsicmp(pe.szExeFile, L"cs2.exe") == 0) {
                         mask |= MASK_CS2;
+                    }
+                    else if (_wcsicmp(pe.szExeFile, L"VALORANT-Win64-Shipping.exe") == 0) {
+                        mask |= MASK_VALORANT;
                     }
                     else if (_wcsicmp(pe.szExeFile, L"robloxplayerbeta.exe") == 0) {
                         mask |= MASK_ROBLOX;

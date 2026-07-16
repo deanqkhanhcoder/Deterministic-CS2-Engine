@@ -191,6 +191,7 @@ extern EventRingBuffer g_eventBuffer;
 extern std::atomic<uint64_t> g_timersCreated;
 extern std::atomic<uint64_t> g_timersExecuted;
 extern std::atomic<uint64_t> g_timersCancelled;
+#endif // MARCO_ENABLE_FORENSIC
 
 // Global telemetry buffers & status flags
 alignas(64) extern MetricBuffer g_hookLatency;
@@ -198,8 +199,6 @@ alignas(64) extern MetricBuffer g_timerJitter;
 alignas(64) extern MetricBuffer g_oversleep;
 alignas(64) extern MetricBuffer g_spinDuration;
 alignas(64) extern MetricBuffer g_stateMutation;
-
-#endif // MARCO_ENABLE_FORENSIC
 
 alignas(64) extern std::atomic<uint32_t> g_schedulerSpikes;
 alignas(64) extern std::atomic<uint32_t> g_coreMigrations;

@@ -177,7 +177,7 @@ void InitForensics(std::string path) {
         GetLocalTime(&st);
 
         fprintf(f, "=== FORENSIC SESSION HEADER ===\n");
-        fprintf(f, "Version: v27.4.0-stable\n");
+        fprintf(f, "Version: v27.8.0-stable\n");
         fprintf(f, "Build: %s\n", BuildTypeName());
         fprintf(f, "BuildDate: %s %s\n", __DATE__, __TIME__);
         fprintf(f, "SessionStartLocal: %04u-%02u-%02u %02u:%02u:%02u\n",
@@ -282,13 +282,13 @@ void StopTelemetryThread() {
     if (s_telemetryThread.joinable()) s_telemetryThread.join();
 }
 
+#endif // MARCO_ENABLE_FORENSIC
+
 alignas(64) MetricBuffer g_hookLatency;
 alignas(64) MetricBuffer g_timerJitter;
 alignas(64) MetricBuffer g_oversleep;
 alignas(64) MetricBuffer g_spinDuration;
 alignas(64) MetricBuffer g_stateMutation;
-
-#endif // MARCO_ENABLE_FORENSIC
 
 alignas(64) std::atomic<uint32_t> g_schedulerSpikes{0};
 alignas(64) std::atomic<uint32_t> g_coreMigrations{0};

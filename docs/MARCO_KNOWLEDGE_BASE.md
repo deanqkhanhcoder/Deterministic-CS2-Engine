@@ -117,6 +117,12 @@ Status vocabulary for this pass:
 - Decoupled `ForensicRingBuffer` from `MARCO_ENABLE_FORENSIC` for production observability, preserving WARN/ERROR/FATAL logging in Release builds.
 - RC Cleanup: Removed ghost diagnostic macros (`MARCO_ENABLE_DIAGNOSTICS`), dead UI files, and stale configuration fields (`watchdogIntervalMs`).
 
+**V27.7 Focus-Storm Hardening**:
+- Fixed severe `DispatchMessage` stalls (100ms+) triggered by rapid OS focus flapping across multiple window handles (Focus Storm).
+- The root cause was synchronous execution of `OutputDebugStringA` (via `DLOG_WARN`) inside `dlog::Write()` holding up the `KeyboardProc` on the Main Thread.
+- **Fix 1**: Moved `OutputDebugStringA` execution into the background `LogWorker()` thread (Asynchronous Logging).
+- **Fix 2**: Reduced `s_focusMutex` lock hold duration inside `IsTargetActive()` by executing heavy telemetry pushes and string formatting outside the critical section.
+
 ## 17. Technical Debt
 
 - Macro cờ build (`MARCO_ENABLE_LOGGING` v.v) chưa bị xoá ở `build_config.h` dù không có người dùng (Đã dọn dẹp ở V27.6).
@@ -124,9 +130,9 @@ Status vocabulary for this pass:
 - F8 tracking vô hình còn tồn tại trong `input_capture.cpp` (Đã xoá ở V27.6).
 - Các đoạn dead code dư thừa do xoá Subtick Autofire (`autofire_controller.cpp`) (Đã dọn ở V27.6).
 
-## 18. Deferred After V27.6
+## 18. Deferred After V27.7
 - Real gameplay validation for BUG-002/003/004/005/006/007/009/010/011 remains required.
-- Viết lại toàn bộ `tests/` để hoạt động với API V27.6 mới.
+- Viết lại toàn bộ `tests/` để hoạt động với API mới.
 
 ## 19. Risk Register
 - Nếu BUG-004 (Resolver Starvation) xảy ra, target window không được nhận diện, toàn bộ macro tắt ngóm. Cực kỳ dễ xảy ra nếu người dùng spam Alt-tab.

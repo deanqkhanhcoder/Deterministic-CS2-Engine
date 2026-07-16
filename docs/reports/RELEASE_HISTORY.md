@@ -1,5 +1,18 @@
 # RELEASE HISTORY
 
+## Version: v27.7 (Focus-Storm Hardening)
+*Date: 2026-06-03*
+
+Highlights:
+- Fixed 100ms+ `DispatchMessage` stalls triggered during rapid OS focus flapping across multiple window handles (Focus Storm).
+- Decoupled `OutputDebugStringA` execution by moving it into the background `LogWorker()` thread to prevent blocking the Main Thread's `KeyboardProc`.
+- Optimized `s_focusMutex` in `IsTargetActive()` to only protect state transition reads/writes, moving telemetry emission and logging outside the critical section.
+- No gameplay behavior changes.
+
+Status:
+SOURCE CERTIFIED
+STABLE
+
 ## Version: v27.6 (Maturity Pass)
 *Date: 2026-06-01*
 

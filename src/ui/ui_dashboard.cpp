@@ -168,15 +168,22 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
 
             using target_platform::MASK_CS2;
             using target_platform::MASK_ROBLOX;
+            using target_platform::MASK_VALORANT;
             uint32_t mask = snap.runningGamesMask;
             std::wstring gameStr = L"WAITING";
             COLORREF gameClr = theme::CLR_WARN;
             if ((mask & MASK_CS2) && (mask & MASK_ROBLOX)) {
                 gameStr = L"CS2 | ROBLOX"; gameClr = theme::CLR_ON;
+            } else if ((mask & MASK_CS2) && (mask & MASK_VALORANT)) {
+                gameStr = L"CS2 | VALORANT"; gameClr = theme::CLR_ON;
+            } else if ((mask & MASK_ROBLOX) && (mask & MASK_VALORANT)) {
+                gameStr = L"ROBLOX | VALORANT"; gameClr = theme::CLR_ON;
             } else if (mask & MASK_CS2) {
                 gameStr = L"CS2"; gameClr = theme::CLR_ON;
             } else if (mask & MASK_ROBLOX) {
                 gameStr = L"ROBLOX"; gameClr = theme::CLR_ON;
+            } else if (mask & MASK_VALORANT) {
+                gameStr = L"VALORANT"; gameClr = theme::CLR_ON;
             }
             layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Game Focus", gameStr.c_str(), gameClr);
             py += rowH;

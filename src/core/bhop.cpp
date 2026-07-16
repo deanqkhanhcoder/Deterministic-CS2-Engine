@@ -111,21 +111,25 @@ static int64_t StallThresholdTicks(const RuntimeConfig& cfg) {
     return (int64_t)((double)thresholdMs / s_qpcToMs);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ══════════════════════════════════════════════════════════════════════
 //  PRECISION WAIT (3-phase: NtDelay + QPC spin + jitter comp)
-//  Runs on worker thread â€” safe to block for any duration.
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  Runs on worker thread — safe to block for any duration.
+// ══════════════════════════════════════════════════════════════════════
 static void PrecisionWait(double ms) {
     // [CHAOS PROTECTION] NaN detection and timing parameter bounds protection
     if (std::isnan(ms)) ms = 0.0;
     if (ms < 0.0) ms = 0.0;
     if (ms > 5000.0) ms = 5000.0; // Clamped to 5 seconds max single delay limit to prevent infinite freezes
 
+    // [FIX Bug #4] Apply accumulated jitter compensation to target
+    double adjustedMs = ms - s_jitterAccum;
+    if (adjustedMs < 0.0) adjustedMs = 0.0;
+
     int64_t startTick = QpcNow();
-    int64_t targetTick = startTick + (int64_t)(ms / s_qpcToMs);
+    int64_t targetTick = startTick + (int64_t)(adjustedMs / s_qpcToMs);
 
     // Phase 1: NtDelayExecution (sub-ms precision, yields CPU)
-    int sleepMs = (int)floor(ms) - 1;
+    int sleepMs = (int)floor(adjustedMs) - 1;
     if (sleepMs > 0 && s_ntDelay) {
         LARGE_INTEGER delay;
         delay.QuadPart = -(int64_t)sleepMs * 10000LL;
@@ -144,7 +148,8 @@ static void PrecisionWait(double ms) {
     // Phase 3: Jitter compensation (EMA drift accumulator)
     int64_t endTick = QpcNow();
     double actualMs = (double)(endTick - startTick) * s_qpcToMs;
-    double jitter = actualMs - ms;
+    // Jitter is the difference between what we got and what we asked for
+    double jitter = actualMs - adjustedMs;
 
     // Sanity check for float anomalies (NaN or Inf)
     if (std::isnan(jitter) || std::isinf(jitter)) {
@@ -158,9 +163,6 @@ static void PrecisionWait(double ms) {
     s_jitterAccum = s_jitterAccum * 0.6 + jitter * 0.4;
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-//  INPUT INJECTION (Space + WheelDown)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static bool s_injectedSpaceState = false;
 
 static void InjectSpaceDown() {
