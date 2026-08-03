@@ -2,6 +2,8 @@
 # MULTI-CONFIGURATION BUILD PIPELINE
 
 CXX      = g++
+CMAKE    ?= cmake
+CMAKE_TEST_BUILD ?= build/make-tests
 BASE_CXXFLAGS = -std=c++20 -fno-omit-frame-pointer -Wall -Wextra -pedantic -Iinclude -Iinclude/core -Iinclude/ui -DWIN32_LEAN_AND_MEAN -msse2 -ffunction-sections -fdata-sections
 BASE_LDFLAGS  = -static -Wl,--gc-sections
 BASE_LDLIBS   = -luser32 -lwinmm -lgdi32 -lcomdlg32 -lavrt
@@ -68,6 +70,14 @@ debug: $(DEBUG_OUT)
 profile: $(PROFILE_OUT)
 release: $(RELEASE_OUT)
 
+test check:
+	$(CMAKE) -S . -B $(CMAKE_TEST_BUILD) -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
+	$(CMAKE) --build $(CMAKE_TEST_BUILD) --target check --parallel
+
+stress-safe:
+	$(CMAKE) -S . -B $(CMAKE_TEST_BUILD) -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
+	$(CMAKE) --build $(CMAKE_TEST_BUILD) --target stress-safe --parallel
+
 $(DEBUG_OUT): $(DEBUG_OBJS)
 	@mkdir -p runtime/bin
 	$(CXX) $(DEBUG_LDFLAGS) -o $@ $^ $(DEBUG_LDLIBS)
@@ -107,4 +117,4 @@ $(RELEASE_OBJDIR)/ui/%.o: src/ui/%.cpp
 clean:
 	@rm -rf build/obj runtime/bin
 
-.PHONY: all debug profile release clean
+.PHONY: all debug profile release test check stress-safe clean
