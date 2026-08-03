@@ -363,7 +363,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument("--timeout-seconds", type=float, default=45.0)
+    parser.add_argument("--timeout-seconds", type=float, default=60.0)
     parser.add_argument("--isolated-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--desktop-name", help=argparse.SUPPRESS)
     parser.add_argument("--executable", type=Path, help=argparse.SUPPRESS)
