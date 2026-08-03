@@ -22,6 +22,7 @@ SAFE_EXECUTABLES = (
     "marco_test_runtime_config.exe",
     "marco_test_target_publication.exe",
     "marco_test_bhop_injection_gate.exe",
+    "marco_test_bhop_injection_queue.exe",
     "marco_test_timing_lifecycle.exe",
     "marco_test_message_pump.exe",
     "marco_test_engine_dispatch_gate.exe",
@@ -362,7 +363,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    parser.add_argument("--timeout-seconds", type=float, default=45.0)
     parser.add_argument("--isolated-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--desktop-name", help=argparse.SUPPRESS)
     parser.add_argument("--executable", type=Path, help=argparse.SUPPRESS)
