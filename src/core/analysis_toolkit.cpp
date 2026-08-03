@@ -12,17 +12,34 @@ TraceBuffer g_traceBuffer;
 static uint64_t s_sessionStartTimeUs = 0;
 
 void Init() {
+    std::lock_guard<std::mutex> lock(g_traceBuffer.mutex);
     g_traceBuffer.head.store(0, std::memory_order_relaxed);
     s_sessionStartTimeUs = timing::NowUs();
 }
 
 void RecordEvent(EventType type, uint8_t core, int32_t value) {
+    std::lock_guard<std::mutex> lock(g_traceBuffer.mutex);
     uint32_t idx = g_traceBuffer.head.fetch_add(1, std::memory_order_relaxed) % TRACE_BUFFER_SIZE;
     TraceEvent& ev = g_traceBuffer.events[idx];
     ev.timestampUs = timing::NowUs();
     ev.eventType = static_cast<uint8_t>(type);
     ev.coreIndex = core;
     ev.value = value;
+}
+
+static std::vector<TraceEvent> SnapshotEvents() {
+    std::lock_guard<std::mutex> lock(g_traceBuffer.mutex);
+    const uint32_t count = g_traceBuffer.head.load(std::memory_order_relaxed);
+    const uint32_t limit = std::min<uint32_t>(count, TRACE_BUFFER_SIZE);
+    const uint32_t start = count > TRACE_BUFFER_SIZE
+        ? count % TRACE_BUFFER_SIZE
+        : 0;
+    std::vector<TraceEvent> result;
+    result.reserve(limit);
+    for (uint32_t i = 0; i < limit; ++i) {
+        result.push_back(g_traceBuffer.events[(start + i) % TRACE_BUFFER_SIZE]);
+    }
+    return result;
 }
 
 static void CalculatePercentiles(std::vector<int32_t>& samples, LatencyStats& stats) {
@@ -41,8 +58,7 @@ static void CalculatePercentiles(std::vector<int32_t>& samples, LatencyStats& st
 void AnalyzeSession(LatencyStats& hook, LatencyStats& jitter, LatencyStats& oversleep,
                     SpikeCluster& spikes, CoreStats coreStats[64], uint32_t& activeCoresCount,
                     uint32_t& totalMigrations, uint32_t& smtCollisions) {
-    uint32_t count = g_traceBuffer.head.load(std::memory_order_relaxed);
-    uint32_t limit = count < TRACE_BUFFER_SIZE ? count : TRACE_BUFFER_SIZE;
+    const auto events = SnapshotEvents();
 
     std::vector<int32_t> hookSamples;
     std::vector<int32_t> jitterSamples;
@@ -57,8 +73,7 @@ void AnalyzeSession(LatencyStats& hook, LatencyStats& jitter, LatencyStats& over
     uint64_t lastSpikeUs = 0;
     uint32_t burstSpikeCount = 0;
 
-    for (uint32_t i = 0; i < limit; ++i) {
-        const TraceEvent& ev = g_traceBuffer.events[i];
+    for (const TraceEvent& ev : events) {
         if (ev.coreIndex < 64) {
             activeCoresFlags[ev.coreIndex] = true;
             coreStats[ev.coreIndex].residencySamples++;
@@ -113,10 +128,8 @@ void ExportCSV(const wchar_t* filePath) {
     std::ofstream out(filePath);
     if (!out.is_open()) return;
     out << "TimestampUs,EventType,Core,Value\n";
-    uint32_t count = g_traceBuffer.head.load(std::memory_order_relaxed);
-    uint32_t limit = count < TRACE_BUFFER_SIZE ? count : TRACE_BUFFER_SIZE;
-    for (uint32_t i = 0; i < limit; ++i) {
-        const TraceEvent& ev = g_traceBuffer.events[i];
+    const auto events = SnapshotEvents();
+    for (const TraceEvent& ev : events) {
         out << ev.timestampUs << "," << (int)ev.eventType << "," << (int)ev.coreIndex << "," << ev.value << "\n";
     }
 }
@@ -125,15 +138,14 @@ void ExportJSON(const wchar_t* filePath) {
     std::ofstream out(filePath);
     if (!out.is_open()) return;
     out << "[\n";
-    uint32_t count = g_traceBuffer.head.load(std::memory_order_relaxed);
-    uint32_t limit = count < TRACE_BUFFER_SIZE ? count : TRACE_BUFFER_SIZE;
-    for (uint32_t i = 0; i < limit; ++i) {
-        const TraceEvent& ev = g_traceBuffer.events[i];
+    const auto events = SnapshotEvents();
+    for (std::size_t i = 0; i < events.size(); ++i) {
+        const TraceEvent& ev = events[i];
         out << "  {\"timestampUs\": " << ev.timestampUs 
             << ", \"type\": " << (int)ev.eventType 
             << ", \"core\": " << (int)ev.coreIndex 
             << ", \"value\": " << ev.value << "}";
-        if (i < limit - 1) out << ",\n";
+        if (i + 1 < events.size()) out << ",\n";
     }
     out << "\n]\n";
 }

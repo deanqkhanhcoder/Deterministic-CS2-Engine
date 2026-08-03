@@ -97,6 +97,7 @@ static int s_forensicContentHeight = 0;
 static etw::TraceAnalysis s_etwAnalysis;
 static bool s_hasEtwAnalysis = false;
 static std::atomic<bool> s_isAnalyzing = false;
+static std::thread s_analysisThread;
 
 // Comparison state
 static COLORREF s_compareColor = theme::FG_VALUE;
@@ -847,7 +848,9 @@ void Init() {
 }
 
 void Destroy() {
-    if (s_bgPanelBr) { DeleteObject(s_bgPanelBr); s_bgPanelBr = nullptr; }
+    if (s_analysisThread.joinable()) s_analysisThread.join();
+    delete s_pendingAnalysis.exchange(nullptr);
+    DeleteObject(s_bgPanelBr); s_bgPanelBr = nullptr;
     if (s_borderPen) { DeleteObject(s_borderPen); s_borderPen = nullptr; }
     if (s_sepPen) { DeleteObject(s_sepPen); s_sepPen = nullptr; }
     if (s_hdrBr) { DeleteObject(s_hdrBr); s_hdrBr = nullptr; }
@@ -966,21 +969,21 @@ void OnCommand(HWND hwnd, WPARAM wParam) {
         case IDB_SAVE_CSV:
             if (ShowSaveDialog(hwnd, L"CSV Files (*.csv)\0*.csv\0All Files (*.*)\0*.*\0", L"csv", path, MAX_PATH)) {
                 analysis::ExportCSV(path);
-                DLOG_INFO(UI, "Exported CSV trace to %ls", reinterpret_cast<int64_t>(path));
+                DLOG_INFO(UI, "Exported CSV trace to %ls", path);
             }
             break;
 
         case IDB_SAVE_JSON:
             if (ShowSaveDialog(hwnd, L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0", L"json", path, MAX_PATH)) {
                 analysis::ExportJSON(path);
-                DLOG_INFO(UI, "Exported JSON trace to %ls", reinterpret_cast<int64_t>(path));
+                DLOG_INFO(UI, "Exported JSON trace to %ls", path);
             }
             break;
 
         case IDB_SAVE_BASE:
             if (ShowSaveDialog(hwnd, L"Baseline Profiles (*.base.json)\0*.base.json\0All Files (*.*)\0*.*\0", L"base.json", path, MAX_PATH)) {
                 analysis::SaveBaseline(path);
-                DLOG_INFO(UI, "Saved baseline profile to %ls", reinterpret_cast<int64_t>(path));
+                DLOG_INFO(UI, "Saved baseline profile to %ls", path);
             }
             break;
 
@@ -988,31 +991,28 @@ void OnCommand(HWND hwnd, WPARAM wParam) {
             if (ShowOpenDialog(hwnd, L"Baseline Profiles (*.base.json)\0*.base.json\0All Files (*.*)\0*.*\0", L"base.json", path, MAX_PATH)) {
                 bool regression = analysis::CompareSession(path, s_compareStatus, 256);
                 s_compareColor = regression ? theme::CLR_OFF : theme::CLR_ON;
-                DLOG_INFO(UI, "Comparison completed against baseline %ls", reinterpret_cast<int64_t>(path));
+                DLOG_INFO(UI, "Comparison completed against baseline %ls", path);
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
             break;
 
         case IDB_ETW_START:
-            std::thread([hwnd]() {
-                if (!etw::StartGlobalTrace()) {
-                    PostMessage(hwnd, WM_ANALYSIS_ETW_START_FAILED, 0, 0);
-                }
-                InvalidateRect(hwnd, nullptr, TRUE);
-            }).detach();
+            if (!etw::StartGlobalTrace()) {
+                PostMessage(hwnd, WM_ANALYSIS_ETW_START_FAILED, 0, 0);
+            }
+            InvalidateRect(hwnd, nullptr, TRUE);
             break;
 
         case IDB_ETW_STOP:
-            std::thread([hwnd]() {
-                etw::StopGlobalTrace();
-                InvalidateRect(hwnd, nullptr, TRUE);
-            }).detach();
+            (void)etw::StopGlobalTrace();
+            InvalidateRect(hwnd, nullptr, TRUE);
             break;
 
         case IDB_ETW_ANALYZE:
             if (s_isAnalyzing.load()) break;
+            if (s_analysisThread.joinable()) s_analysisThread.join();
             s_isAnalyzing.store(true);
-            std::thread([hwnd]() {
+            s_analysisThread = std::thread([hwnd]() {
                 auto newAnalysis = new etw::TraceAnalysis();
                 bool res = etw::AnalyzeTrace(L"performance_trace.etl", *newAnalysis);
                 if (!res) {
@@ -1021,7 +1021,7 @@ void OnCommand(HWND hwnd, WPARAM wParam) {
                 }
                 s_pendingAnalysis.store(newAnalysis);
                 PostMessage(hwnd, WM_COMMAND, MAKEWPARAM(IDB_ETW_ANALYZE_COMPLETE, res ? 1 : 0), 0);
-            }).detach();
+            });
             break;
             
         case IDB_ETW_ANALYZE_COMPLETE:
@@ -1036,7 +1036,7 @@ void OnCommand(HWND hwnd, WPARAM wParam) {
                             s_etwAnalysis.cswitchCount, s_etwAnalysis.dpcCount, s_etwAnalysis.isrCount);
                         if (!s_etwAnalysis.offenders.empty()) {
                             DLOG_WARN(ETW, "Top DPC Offender: %ls (%u events)",
-                                      reinterpret_cast<int64_t>(s_etwAnalysis.offenders[0].driverName), s_etwAnalysis.offenders[0].dpcCount);
+                                      s_etwAnalysis.offenders[0].driverName, s_etwAnalysis.offenders[0].dpcCount);
                         }
                     }
                     delete pending;

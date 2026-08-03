@@ -15,9 +15,10 @@
 namespace engine {
 
 void OnTimerExpired(Key k, uint64_t expectedTimerId) {
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
     bool _doNotify = false;
     int ki_k = ki(k);
-    DLOG_TRACE(Runtime, "OnTimerExpired: Executing release for %s", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]));
+    DLOG_TRACE(Runtime, "OnTimerExpired: Executing release for %s", keymap::KeyName[ki_k]);
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
     InjectionBatch batch;
     
@@ -29,13 +30,16 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (expectedTimerId != 0 && s_state.expectedTimerId[ki_k] != expectedTimerId) {
             DLOG_TRACE(Runtime, "OnTimerExpired: Ignoring stale callback for %s (expected=%llu, actual=%llu)",
-                       reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), s_state.expectedTimerId[ki_k], expectedTimerId);
+                       keymap::KeyName[ki_k], s_state.expectedTimerId[ki_k], expectedTimerId);
 #if MARCO_ENABLE_FORENSIC
             telemetry::ForensicEvent evRej = { telemetry::ForensicTrapType::TIMER_REJECTED, GetCurrentThreadId(), timing::NowUs(), (int32_t)ki_k, (uint32_t)(expectedTimerId & 0xFFFFFFFF), (uint32_t)(s_state.expectedTimerId[ki_k] & 0xFFFFFFFF), false };
             telemetry::g_forensicBuffer.Push(evRej);
 #endif
             return;
         }
+        batch.expectedTarget = s_state.expectedTimerTarget[ki_k];
+        s_state.expectedTimerId[ki_k] = 0;
+        s_state.expectedTimerTarget[ki_k] = {};
         
         // Release the injected counter key if it's not physically held
         if (s_state.logical[ki_k] && !s_state.phys[ki_k]) {
@@ -70,7 +74,7 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
         
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     _doNotify = true;
 }
 

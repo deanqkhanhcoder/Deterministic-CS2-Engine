@@ -7,6 +7,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <condition_variable>
 #include <immintrin.h>
 #include <windows.h>
 #include "build_config.h"
@@ -15,47 +16,43 @@
 #include "topology.h"
 #include "analysis_toolkit.h"
 #include <mutex>
+#include <deque>
 #include "state_engine.h"
 
 namespace timing {
 
 // â”€â”€ QPC state â”€â”€
 static int64_t s_qpcFreq = 0;
+static std::once_flag s_qpcInit;
+
+static int64_t QpcFrequency() {
+    std::call_once(s_qpcInit, [] {
+        LARGE_INTEGER freq;
+        QueryPerformanceFrequency(&freq);
+        s_qpcFreq = freq.QuadPart;
+    });
+    return s_qpcFreq;
+}
 
 void Init() {
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    s_qpcFreq = freq.QuadPart;
-    DLOG_INFO(Timing, "QPC frequency = %lld Hz", s_qpcFreq);
+    DLOG_INFO(Timing, "QPC frequency = %lld Hz", QpcFrequency());
 }
 
 int64_t NowUs() {
     LARGE_INTEGER cnt;
     QueryPerformanceCounter(&cnt);
-    int64_t freq = s_qpcFreq;
-    if (freq == 0) {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        freq = f.QuadPart;
-        s_qpcFreq = freq;
-    }
+    const int64_t freq = QpcFrequency();
     // Use split arithmetic to avoid overflow for systems with >10.6 days uptime
-    return (cnt.QuadPart / freq) * 1000000LL + 
+    return (cnt.QuadPart / freq) * 1000000LL +
            ((cnt.QuadPart % freq) * 1000000LL) / freq;
 }
 
 int64_t NowMs() {
     LARGE_INTEGER cnt;
     QueryPerformanceCounter(&cnt);
-    int64_t freq = s_qpcFreq;
-    if (freq == 0) {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        freq = f.QuadPart;
-        s_qpcFreq = freq;
-    }
+    const int64_t freq = QpcFrequency();
     // Use split arithmetic to avoid overflow
-    return (cnt.QuadPart / freq) * 1000LL + 
+    return (cnt.QuadPart / freq) * 1000LL +
            ((cnt.QuadPart % freq) * 1000LL) / freq;
 }
 
@@ -70,15 +67,36 @@ struct alignas(64) TimerSlot {
 
 static constexpr int NUM_SLOTS = 5;  // One per WASD key + Mouse1
 
-static HWND             s_targetHwnd = nullptr;
 static std::thread      s_timerThread;
 alignas(64) static std::mutex s_spinlock;
-static HANDLE           s_cv_event = nullptr;
+static std::mutex       s_lifecycleMutex;
+static std::condition_variable s_lifecycleCv;
+static bool             s_stopping = false;
+static std::atomic<HANDLE> s_cv_event{nullptr};
+static std::atomic<HWND> s_expiryWindow{nullptr};
+
+struct ExpiredTimer {
+    Key key;
+    uint64_t id;
+};
+static std::mutex s_expiryQueueMutex;
+static std::deque<ExpiredTimer> s_expiryQueue;
 
 alignas(64) static std::atomic<bool>     s_running{false};
 alignas(64) static std::atomic<uint64_t> s_nextTimerId{1};
 alignas(64) static std::atomic<bool>     s_dirty{false};
 alignas(64) static std::atomic<uint8_t>  s_activeMask{0};
+#ifdef MARCO_TIMING_TESTING
+static std::atomic<bool> s_forceWaitableTimerFailure{false};
+
+void SetForceWaitableTimerFailureForTesting(bool force) {
+    s_forceWaitableTimerFailure.store(force, std::memory_order_release);
+}
+
+void SetNextTimerIdForTesting(uint64_t nextId) {
+    s_nextTimerId.store(nextId, std::memory_order_release);
+}
+#endif
 
 static TimerSlot        s_slots[NUM_SLOTS];  // indexed by Key enum
 
@@ -127,15 +145,22 @@ static void UpdateAdaptiveController(int64_t oversleepUs) {
     telemetry::g_wakeVarianceUs.store((int64_t)s_varOversleepUs, std::memory_order_relaxed);
 }
 
-static void TimerThreadFunc() {
+static void TimerThreadFunc(HANDLE wakeEvent) {
     // Set this thread to high priority for timing precision and pin to P-Core
     topology::PinCriticalThread(L"Pro Audio");
 
-    HANDLE hTimer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    HANDLE hTimer = nullptr;
+#ifdef MARCO_TIMING_TESTING
+    if (!s_forceWaitableTimerFailure.load(std::memory_order_acquire))
+#endif
+    hTimer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!hTimer) {
+#ifdef MARCO_TIMING_TESTING
+        if (!s_forceWaitableTimerFailure.load(std::memory_order_acquire))
+#endif
         hTimer = CreateWaitableTimerW(NULL, FALSE, NULL);
     }
-    HANDLE events[] = { hTimer, s_cv_event };
+    HANDLE events[] = { hTimer, wakeEvent };
 
     while (true) {
         // Heartbeat & Core tracking
@@ -173,7 +198,7 @@ static void TimerThreadFunc() {
             // No active timers â€” wait for signal with timeout (250ms) to maintain core telemetry
             // Only mark blocked if we are actually waiting
             lock.unlock();
-            DWORD waitRes = WaitForSingleObject(s_cv_event, 250);
+            DWORD waitRes = WaitForSingleObject(wakeEvent, 250);
             (void)waitRes;
 #if MARCO_ENABLE_HEARTBEATS
             telemetry::g_blockedTiming.store(false, std::memory_order_relaxed);
@@ -197,13 +222,22 @@ static void TimerThreadFunc() {
         if (remainUs > wakeMargin) {
             LARGE_INTEGER dueTime;
             dueTime.QuadPart = -(int64_t)((remainUs - spinTail) * 10); // spinTail early spin, 100ns intervals
-            if (hTimer) {
-                SetWaitableTimer(hTimer, &dueTime, 0, NULL, NULL, FALSE);
-            }
-            
-            lock.unlock();
+            const bool timerArmed = hTimer != nullptr &&
+                SetWaitableTimer(hTimer, &dueTime, 0, NULL, NULL, FALSE) != FALSE;
 
-            WaitForMultipleObjects(2, events, FALSE, INFINITE);
+            lock.unlock();
+            if (timerArmed) {
+                WaitForMultipleObjects(2, events, FALSE, INFINITE);
+            } else {
+                // Native waitable timers can be unavailable under restricted
+                // policies. Wait on the wake event with a bounded timeout;
+                // never pass a null handle or busy-spin for the full duration.
+                const int64_t coarseWaitUs = std::max<int64_t>(
+                    1000, remainUs - wakeMargin);
+                const DWORD coarseWaitMs = static_cast<DWORD>(std::min<int64_t>(
+                    coarseWaitUs / 1000, MAXDWORD - 1));
+                WaitForSingleObject(wakeEvent, coarseWaitMs);
+            }
 
             lock.lock();
             continue; // Re-evaluate nearest
@@ -279,11 +313,30 @@ static void TimerThreadFunc() {
             }
 #endif
 
-            // Invoke directly instead of using PostMessage
-            int64_t postTimeUs = timing::NowUs();
-            (void)postTimeUs;
-            DLOG_INFO(Timing, "TimerThreadFunc: Direct call OnTimerExpired for %s (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(slot.key)]), slot.id);
-            engine::OnTimerExpired(slot.key, slot.id);
+            const HWND expiryWindow =
+                s_expiryWindow.load(std::memory_order_acquire);
+            if (expiryWindow == nullptr) {
+                // Isolated timing tests have no hook-owner window.
+                engine::OnTimerExpired(slot.key, slot.id);
+            } else {
+                {
+                    std::lock_guard<std::mutex> queueLock(s_expiryQueueMutex);
+                    s_expiryQueue.push_back({slot.key, slot.id});
+                }
+                bool posted = false;
+                while (s_running.load(std::memory_order_acquire)) {
+                    if (PostMessageW(expiryWindow, WM_TIMER_EXPIRED, 0, 0)) {
+                        posted = true;
+                        break;
+                    }
+                    Sleep(1);
+                }
+                if (!posted) {
+                    DLOG_WARN(Timing,
+                              "Timer expiry post aborted during shutdown for %s",
+                              keymap::KeyName[ki(slot.key)]);
+                }
+            }
         } else {
             lock.unlock();
         }
@@ -294,34 +347,90 @@ static void TimerThreadFunc() {
     }
 }
 
-void StartTimerThread(HWND hwnd) {
-    if (s_running.exchange(true)) return;
-    s_targetHwnd = hwnd;
-    for (auto& slot : s_slots) slot.active = false;
-    s_activeMask.store(0, std::memory_order_relaxed);
-    if (s_cv_event == nullptr) {
-        s_cv_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+void DrainExpiredTimers() {
+    for (;;) {
+        ExpiredTimer expired{};
+        {
+            std::lock_guard<std::mutex> queueLock(s_expiryQueueMutex);
+            if (s_expiryQueue.empty()) return;
+            expired = s_expiryQueue.front();
+            s_expiryQueue.pop_front();
+        }
+        engine::OnTimerExpired(expired.key, expired.id);
     }
-    s_timerThread = std::thread(TimerThreadFunc);
+}
+
+void StartTimerThread(HWND expiryWindow) {
+    std::unique_lock<std::mutex> lifecycleLock(s_lifecycleMutex);
+    s_lifecycleCv.wait(lifecycleLock, [] { return !s_stopping; });
+    if (s_running.load(std::memory_order_acquire) || s_timerThread.joinable()) return;
+    {
+        std::lock_guard<std::mutex> lock(s_spinlock);
+        for (auto& slot : s_slots) slot = TimerSlot{};
+        s_activeMask.store(0, std::memory_order_relaxed);
+    }
+    s_dirty.store(false, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> queueLock(s_expiryQueueMutex);
+        s_expiryQueue.clear();
+    }
+    HANDLE wakeEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (wakeEvent == nullptr) {
+        DLOG_ERR(Timing, "Failed to create timer wake event");
+        return;
+    }
+    s_expiryWindow.store(expiryWindow, std::memory_order_release);
+    s_cv_event.store(wakeEvent, std::memory_order_release);
+    s_running.store(true, std::memory_order_release);
+    try {
+        s_timerThread = std::thread(TimerThreadFunc, wakeEvent);
+    } catch (...) {
+        s_running.store(false, std::memory_order_release);
+        s_expiryWindow.store(nullptr, std::memory_order_release);
+        s_cv_event.store(nullptr, std::memory_order_release);
+        CloseHandle(wakeEvent);
+        throw;
+    }
 }
 
 void StopTimerThread() {
-    if (!s_running.exchange(false)) return;
-    if (s_cv_event) SetEvent(s_cv_event);
-    if (s_timerThread.joinable())
-        s_timerThread.join();
-    if (s_cv_event) {
-        CloseHandle(s_cv_event);
-        s_cv_event = nullptr;
+    std::thread threadToJoin;
+    HANDLE wakeEvent = nullptr;
+    {
+        std::unique_lock<std::mutex> lifecycleLock(s_lifecycleMutex);
+        s_lifecycleCv.wait(lifecycleLock, [] { return !s_stopping; });
+        if (!s_running.load(std::memory_order_acquire) && !s_timerThread.joinable()) return;
+        s_stopping = true;
+        s_running.store(false, std::memory_order_release);
+        wakeEvent = s_cv_event.load(std::memory_order_acquire);
+        if (wakeEvent) SetEvent(wakeEvent);
+        threadToJoin = std::move(s_timerThread);
     }
+
+    if (threadToJoin.joinable()) threadToJoin.join();
+
+    {
+        std::lock_guard<std::mutex> lifecycleLock(s_lifecycleMutex);
+        HANDLE ownedEvent = s_cv_event.exchange(nullptr, std::memory_order_acq_rel);
+        s_expiryWindow.store(nullptr, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> queueLock(s_expiryQueueMutex);
+            s_expiryQueue.clear();
+        }
+        if (ownedEvent) CloseHandle(ownedEvent);
+        s_stopping = false;
+    }
+    s_lifecycleCv.notify_all();
 }
 
 uint64_t ScheduleTimerUs(Key key, int64_t durationUs) {
+    std::lock_guard<std::mutex> lifecycleLock(s_lifecycleMutex);
+    if (!s_running.load(std::memory_order_acquire) || s_stopping) return 0;
     int64_t expireUs = NowUs() + durationUs;
     uint64_t id = s_nextTimerId.fetch_add(1, std::memory_order_relaxed);
     bool wakeRequired = false;
 
-    DLOG_INFO(Timing, "ScheduleTimerUs: %s for %lld us (id=%llu)", reinterpret_cast<int64_t>(keymap::KeyName[ki(key)]), durationUs, id);
+    DLOG_INFO(Timing, "ScheduleTimerUs: %s for %lld us (id=%llu)", keymap::KeyName[ki(key)], durationUs, id);
 
     {
         std::unique_lock<std::mutex> lock(s_spinlock);
@@ -353,8 +462,9 @@ uint64_t ScheduleTimerUs(Key key, int64_t durationUs) {
     telemetry::g_timersCreated.fetch_add(1, std::memory_order_relaxed);
 #endif
 
-    if (wakeRequired && s_cv_event) {
-        SetEvent(s_cv_event);
+    HANDLE wakeEvent = s_cv_event.load(std::memory_order_relaxed);
+    if (wakeRequired && wakeEvent) {
+        SetEvent(wakeEvent);
     }
     
     return id;
@@ -365,6 +475,8 @@ uint64_t ScheduleTimer(Key key, int durationMs) {
 }
 
 void CancelTimer(Key key) {
+    std::lock_guard<std::mutex> lifecycleLock(s_lifecycleMutex);
+    if (!s_running.load(std::memory_order_acquire) || s_stopping) return;
     std::unique_lock<std::mutex> lock(s_spinlock);
     if (s_slots[ki(key)].active) {
         s_slots[ki(key)].active = false;

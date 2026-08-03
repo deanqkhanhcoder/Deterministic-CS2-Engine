@@ -90,8 +90,12 @@ std::string GetProjectRootA() {
     int size = WideCharToMultiByte(CP_UTF8, 0, rootW.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (size <= 0) return "";
     
-    std::string out(size - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, rootW.c_str(), -1, out.data(), size, nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, rootW.c_str(), -1, out.data(), size,
+                            nullptr, nullptr) != size) {
+        return "";
+    }
+    out.resize(static_cast<std::size_t>(size - 1));
     return out;
 }
 

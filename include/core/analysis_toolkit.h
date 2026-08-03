@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <atomic>
 #include <string>
+#include <mutex>
 #include "build_config.h"
 
 namespace analysis {
@@ -50,6 +51,7 @@ constexpr size_t TRACE_BUFFER_SIZE = 32768;
 struct TraceBuffer {
     std::atomic<uint32_t> head{0};
     TraceEvent events[TRACE_BUFFER_SIZE];
+    mutable std::mutex mutex;
 };
 
 #if !defined(MARCO_RELEASE)

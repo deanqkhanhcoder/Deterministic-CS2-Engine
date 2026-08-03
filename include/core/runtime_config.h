@@ -114,11 +114,18 @@ namespace rcfg {
     // Returns by value to ensure snapshot consistency via seqlock.
     RuntimeConfig Get();
 
+    // Return a finite, range-checked runtime snapshot without publishing it.
+    // Exposed so config I/O and deterministic tests share the exact same policy.
+    RuntimeConfig Sanitize(const RuntimeConfig& newCfg);
+
     // Apply new config (called from main/UI thread only)
     void Apply(const RuntimeConfig& newCfg);
 
     // Get mutable reference for editing (UI thread only, before Apply)
-    RuntimeConfig& GetMutable();
+    // Returns an isolated editable snapshot. Call Apply() to publish it.
+    // A shared mutable staging reference allowed concurrent UI/hotkey edits
+    // to race and corrupt the seqlock writer sequence.
+    RuntimeConfig GetMutable();
 
     // Initialize with defaults
     void Init();

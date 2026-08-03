@@ -16,7 +16,9 @@ namespace engine {
 
 void ToggleSuspend() {
 
-    InjectionBatch batch;
+    std::unique_lock<std::mutex> operationLock(s_operationMutex);
+
+    InjectionBatch batch(target_platform::GetCurrentIdentity());
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_state.suspended = !s_state.suspended;
@@ -27,7 +29,8 @@ void ToggleSuspend() {
         }
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
+    operationLock.unlock();
     if (!s_suspendedAtomic.load(std::memory_order_acquire)) {
         // Reinstall hooks if they were uninstalled by watchdog/fail-safe
         capture::Reinstall();
@@ -36,15 +39,17 @@ void ToggleSuspend() {
     NotifyUI();
 }
 
-void ClearHeldKeys() {
+void ClearHeldKeys(const target_platform::TargetIdentity& target) {
 
-    InjectionBatch batch;
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
+
+    InjectionBatch batch(target);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         ReconcileInternal(true, batch);
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
 }
 
 // Unified Focus Reconciliation
@@ -81,7 +86,9 @@ static void ReconcileLogicalStateFromPhysical(InjectionBatch& batch) {
 }
 
 void RebuildState() {
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
     DLOG_INFO(Runtime, "Rebuilding semantic state from physical truth...");
+    const auto activeTarget = target_platform::GetCurrentIdentity();
     
     // Sync cached physical states with hardware physical truth (prevents stuck keys via Admin window hook bypass)
     bool snapSpace = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
@@ -93,8 +100,8 @@ void RebuildState() {
     bool snapLShift = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
     bool snapLCtrl = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
     bool snapC = (GetAsyncKeyState('C') & 0x8000) != 0;
-    
-    InjectionBatch batch;
+
+    InjectionBatch batch(activeTarget);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         
@@ -124,7 +131,7 @@ void RebuildState() {
             true };
         telemetry::g_forensicBuffer.Push(evAfter);
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     NotifyUI();
 }
 

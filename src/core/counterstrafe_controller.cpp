@@ -14,6 +14,28 @@
 
 namespace engine {
 
+void CommitLogicalStateFromInjection() {
+    const std::uint32_t heldMask = injection::HeldMovementMask();
+    std::lock_guard<std::mutex> lock(s_stateMutex);
+    for (int i = 0; i < 4; ++i) {
+        s_state.logical[i] = (heldMask & (1u << i)) != 0;
+    }
+    PublishEngineState();
+}
+
+void FlushAndCommitLogicalState(InjectionBatch& batch) {
+    batch.flush();
+    CommitLogicalStateFromInjection();
+}
+
+UINT ReconcilePendingOutput(
+    const target_platform::TargetIdentity& target) {
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
+    const UINT released = injection::ReconcilePendingReleasesForTarget(target);
+    CommitLogicalStateFromInjection();
+    return released;
+}
+
 void ResolveAxis(Axis ax, InjectionBatch& batch) {
     int ai_a = ai(ax);
     Key posKey = keymap::AxisPosKey[ai_a];
@@ -139,28 +161,6 @@ struct NoiseGenerator {
 
 static thread_local NoiseGenerator s_noise;
 
-void ApplyOverlapCounterStrafe(Key releaseKey, Key counterKey, int64_t overlapUs, int64_t brakeUs, InjectionBatch& batch) {
-    (void)brakeUs;
-    int ki_r = ki(releaseKey);
-    int ki_c = ki(counterKey);
-    // 1. Inject counterKey DOWN immediately (in the same batch, achieving 0-us subtick packing)
-    if (!s_state.logical[ki_c]) {
-        batch.push(counterKey, true);
-        s_state.logical[ki_c] = true;
-    }
-    
-    // 2. Schedule releaseKey UP
-    if (overlapUs <= 0) {
-        if (s_state.logical[ki_r]) {
-            batch.push(releaseKey, false);
-            s_state.logical[ki_r] = false;
-        }
-    } else {
-        s_state.expectedTimerId[ki_r] = timing::ScheduleTimerUs(releaseKey, overlapUs);
-    }
-}
-
-
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     const RuntimeConfig& rc = rcfg::Get();
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
@@ -246,22 +246,21 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     
     double v_target = (ax == Axis::X) ? vx : vy;
     
-    // 4. O(1) Deterministic Hybrid 2D LUT Lookup
-    int pureDurMs = movement::LookupStopDur2D(v_target, v_orth, wish_mode, s_state.IsCrouching());
-    
-    // 5. Apply authority biases
-    int alignedDurMs = pureDurMs;
-    
-    auto applyShape = [&](int dur) {
-        double d = (double)dur * profile.brake_bias_multiplier;
-        double norm = d / 31.25;
-        if (norm < 0.01) norm = 0.01;
-        return std::pow(norm, profile.aggressiveness_curve) * 31.25;
-    };
-    
-    double shapedDur = applyShape(alignedDurMs) + profile.authority_bias_ms;
-    
-    int finalDurMs = std::max(rc.minStopMs, (int)std::round(shapedDur) - rc.latencyMarginMs);
+    // 4. Profile-aware deterministic stop simulation
+    int pureDurMs = movement::CalculateStopDur2D(
+        v_target,
+        v_orth,
+        wish_mode,
+        s_state.IsCrouching(),
+        profile.accuracyThreshold,
+        rc);
+
+    if (pureDurMs <= 0) {
+        return 0;
+    }
+
+    // 5. Apply authority biases through the bounded, deterministic policy.
+    int finalDurMs = movement::ShapeBrakeDurationMs(pureDurMs, profile, rc);
     int64_t baseBrakeUs = (int64_t)finalDurMs * 1000LL;
     int64_t effectiveBrakeUs = std::max(100LL, baseBrakeUs);
     
@@ -274,7 +273,7 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
 bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch) {
     int ki_c = ki(counterKey);
     if (s_state.phys[ki_c]) {
-        DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: %s phys held", reinterpret_cast<int64_t>(keymap::KeyName[ki_c]));
+        DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: %s phys held", keymap::KeyName[ki_c]);
 #if MARCO_ENABLE_FORENSIC
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CANCELLED, GetCurrentThreadId(), timing::NowUs(), 1 /*OppositePhys*/, (uint32_t)ki_c, (uint32_t)heldUs, true };
         telemetry::g_forensicBuffer.Push(ev);
@@ -291,7 +290,7 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
     }
     const RuntimeConfig& rc = rcfg::Get();
     if (heldUs < rc.minTapUs) {
-        DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: tap too short (%lld < %d)", heldUs, rc.minTapUs);
+        DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: tap too short (%lld < %lld)", heldUs, rc.minTapUs);
 #if MARCO_ENABLE_FORENSIC
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CANCELLED, GetCurrentThreadId(), timing::NowUs(), 3 /*TooShort*/, (uint32_t)heldUs, (uint32_t)rc.minTapUs, true };
         telemetry::g_forensicBuffer.Push(ev);
@@ -301,6 +300,9 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
 
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
     int64_t effectiveBrakeUs = CalculateTrueBrakeUs(relKey, ax, heldUs);
+    if (effectiveBrakeUs <= 0) {
+        return false;
+    }
     
     int64_t baseOverlapUs = profile.overlap_duration_us;
     
@@ -309,61 +311,44 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
     // Phase 5: Hardware-Emulation Humanization (Gaussian Micro-Jitter)
     int64_t microJitterOverlapUs = (int64_t)(s_noise.next_gaussian(0.0, 0.25) * 1000.0);
 
-    effectiveOverlapUs = std::max(0LL, effectiveOverlapUs + microJitterOverlapUs);
+    effectiveOverlapUs = movement::ClampCounterOverlapUs(
+        effectiveOverlapUs + microJitterOverlapUs, effectiveBrakeUs);
 
-    // Phase 6: Guarantee Physical Quantization Survival
-    const int64_t MIN_BRAKE_PHASE_US = 16000;
-    if (effectiveBrakeUs - effectiveOverlapUs < MIN_BRAKE_PHASE_US) {
-        effectiveBrakeUs = effectiveOverlapUs + MIN_BRAKE_PHASE_US;
+    // Preserve normal key-release sequencing: overlap admission precedes the
+    // counter timer. Both must succeed before publishing synthetic ownership.
+    uint64_t overlapTimerId = 0;
+    if (effectiveOverlapUs > 0) {
+        overlapTimerId = timing::ScheduleTimerUs(relKey, effectiveOverlapUs);
+        if (overlapTimerId == 0) return false;
     }
 
-    ApplyOverlapCounterStrafe(relKey, counterKey, effectiveOverlapUs, effectiveBrakeUs, batch);
-    
-    s_state.expectedTimerId[ki(counterKey)] = timing::ScheduleTimerUs(counterKey, effectiveBrakeUs);
+    const uint64_t counterTimerId =
+        timing::ScheduleTimerUs(counterKey, effectiveBrakeUs);
+    if (counterTimerId == 0) {
+        if (overlapTimerId != 0) timing::CancelTimer(relKey);
+        return false;
+    }
+
+    const int ki_r = ki(relKey);
+    if (!s_state.logical[ki_c]) {
+        batch.push(counterKey, true);
+        s_state.logical[ki_c] = true;
+    }
+    if (effectiveOverlapUs <= 0) {
+        if (s_state.logical[ki_r]) {
+            batch.push(relKey, false);
+            s_state.logical[ki_r] = false;
+        }
+    } else {
+        s_state.expectedTimerTarget[ki_r] = batch.expectedTarget;
+        s_state.expectedTimerId[ki_r] = overlapTimerId;
+    }
+
+    s_state.expectedTimerTarget[ki_c] = batch.expectedTarget;
+    s_state.expectedTimerId[ki_c] = counterTimerId;
     
     s_state.mem.conflictPenalty[ai(ax)] = std::max(0.0, s_state.mem.conflictPenalty[ai(ax)] - rc.conflictDecrement);
     return true;
 }
-
-bool OnLButtonDown() {
-    bool _doNotify = false;
-    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
-    InjectionBatch batch;
-    
-    {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        
-        auto applyBrake = [&](Axis ax) {
-            for (int i = 0; i < 2; ++i) {
-                Key key = (ax == Axis::Y) ? (i == 0 ? Key::W : Key::S) : (i == 0 ? Key::A : Key::D);
-                int ki_k = ki(key);
-                if (s_state.phys[ki_k] && s_state.axisState[ai(ax)] != AxisState::Conflict) {
-                    Key counterKey = (ax == Axis::Y) ? (i == 0 ? Key::S : Key::W) : (i == 0 ? Key::D : Key::A);
-                    int ki_c = ki(counterKey);
-                    
-                    if (s_state.phys[ki_c]) continue;
-                    
-                    int64_t heldUs = timing::NowUs() - s_state.downTimeUs[ki_k];
-                    int64_t brakeUs = CalculateTrueBrakeUs(key, ax, heldUs);
-                    
-                    if (brakeUs > 0) {
-                        batch.push(counterKey, true);
-                        s_state.logical[ki_c] = true;
-                        uint64_t timerId = timing::ScheduleTimerUs(counterKey, brakeUs);
-                        s_state.expectedTimerId[ki_c] = timerId;
-                    }
-                }
-            }
-        };
-        applyBrake(Axis::Y); applyBrake(Axis::X);
-        PublishEngineState();
-    }
-    batch.flush();
-    _doNotify = true;
-    
-    return false; // NEVER swallow the actual mouse click
-}
-
-void OnLButtonUp() {}
 
 } // namespace engine

@@ -17,6 +17,7 @@ runtime/crash/
 runtime/bin/
 *.log
 *.csv
+!tests/regression/fixtures/*.csv
 *.png
 
 # Python caches

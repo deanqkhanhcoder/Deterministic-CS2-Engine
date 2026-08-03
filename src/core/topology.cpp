@@ -83,7 +83,7 @@ void Init() {
         }
     }
 
-    DLOG_INFO(Scheduler, "Topology initialized: %zu P-Cores, %zu E-Cores", s_pCores.size(), s_eCores.size());
+    DLOG_INFO(Scheduler, "Topology initialized: %llu P-Cores, %llu E-Cores", static_cast<unsigned long long>(s_pCores.size()), static_cast<unsigned long long>(s_eCores.size()));
 }
 
 bool PinCriticalThread(const wchar_t* mmcssProfile) {
@@ -92,7 +92,7 @@ bool PinCriticalThread(const wchar_t* mmcssProfile) {
     DWORD taskIndex = 0;
     HANDLE hTask = AvSetMmThreadCharacteristicsW(mmcssProfile, &taskIndex);
     if (hTask) {
-        DLOG_INFO(Scheduler, "MMCSS registered critical thread under profile: %ls", reinterpret_cast<int64_t>(mmcssProfile));
+        DLOG_INFO(Scheduler, "MMCSS registered critical thread under profile: %ls", mmcssProfile);
     } else {
         DLOG_WARN(Scheduler, "Failed to register MMCSS for critical thread (error %lu)", GetLastError());
     }
@@ -123,7 +123,7 @@ bool PinHookThread(const wchar_t* mmcssProfile) {
     DWORD taskIndex = 0;
     HANDLE hTask = AvSetMmThreadCharacteristicsW(mmcssProfile, &taskIndex);
     if (hTask) {
-        DLOG_INFO(Scheduler, "MMCSS registered hook thread under profile: %ls", reinterpret_cast<int64_t>(mmcssProfile));
+        DLOG_INFO(Scheduler, "MMCSS registered hook thread under profile: %ls", mmcssProfile);
     } else {
         DLOG_WARN(Scheduler, "Failed to register MMCSS for hook thread (error %lu)", GetLastError());
     }

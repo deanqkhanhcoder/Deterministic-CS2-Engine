@@ -74,6 +74,7 @@ static void ReadPublishedEngineState(EngineStatePublication& pub) {
 
 State s_state;
 std::mutex s_stateMutex;
+std::mutex s_operationMutex;
 std::atomic<bool> s_suspendedAtomic{false};
 bool s_hookInstalled = false;
 
@@ -322,28 +323,9 @@ void TakeSnapshot(RuntimeSnapshot& out) {
         int64_t oversleepAvgTenths = telemetry::g_oversleep.GetAverageTenths();
 
         static uint32_t lastConsumedOversleepIdx = 0;
-        uint32_t currOversleepIdx = telemetry::g_oversleep.index.load(std::memory_order_relaxed);
-        bool spikeInWindow = false;
-
-        static bool firstSampleCheck = true;
-        if (firstSampleCheck) {
-            lastConsumedOversleepIdx = currOversleepIdx;
-            firstSampleCheck = false;
-        }
-
-        if (currOversleepIdx != lastConsumedOversleepIdx) {
-            uint32_t start = lastConsumedOversleepIdx;
-            uint32_t end = currOversleepIdx;
-            lastConsumedOversleepIdx = currOversleepIdx;
-
-            for (uint32_t idx = start; idx < end; idx++) {
-                int64_t val = telemetry::g_oversleep.samples[idx % telemetry::MetricBuffer::SIZE];
-                if (val > 50) { // >50us late is a scheduler spike
-                    spikeInWindow = true;
-                    break;
-                }
-            }
-        }
+        static bool oversleepCursorInitialized = false;
+        const bool spikeInWindow = telemetry::g_oversleep.AnySince(
+            lastConsumedOversleepIdx, oversleepCursorInitialized, 50);
 
         cachedTimelineJitter[cachedTimelineIndex] = jitterAvgTenths;
         cachedTimelineOversleep[cachedTimelineIndex] = oversleepAvgTenths;
@@ -361,10 +343,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     // Histograms (Only iterate over the valid active samples in each ring buffer)
     memset(out.histHook, 0, sizeof(out.histHook));
-    uint32_t hookIdx = telemetry::g_hookLatency.index.load(std::memory_order_relaxed);
-    int hookLimit = hookIdx < telemetry::MetricBuffer::SIZE ? (int)hookIdx : telemetry::MetricBuffer::SIZE;
+    int64_t hookSamples[telemetry::MetricBuffer::SIZE]{};
+    const int hookLimit = telemetry::g_hookLatency.CopySamples(hookSamples);
     for (int i = 0; i < hookLimit; i++) {
-        int64_t val = telemetry::g_hookLatency.samples[i];
+        int64_t val = hookSamples[i];
         if (val < 5) out.histHook[0]++;
         else if (val < 10) out.histHook[1]++;
         else if (val < 20) out.histHook[2]++;
@@ -375,10 +357,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     if (timingActive) {
         memset(cachedHistJitter, 0, sizeof(cachedHistJitter));
-        uint32_t jitterIdx = telemetry::g_timerJitter.index.load(std::memory_order_relaxed);
-        int jitterLimit = jitterIdx < telemetry::MetricBuffer::SIZE ? (int)jitterIdx : telemetry::MetricBuffer::SIZE;
+        int64_t jitterSamples[telemetry::MetricBuffer::SIZE]{};
+        const int jitterLimit = telemetry::g_timerJitter.CopySamples(jitterSamples);
         for (int i = 0; i < jitterLimit; i++) {
-            int64_t val = telemetry::g_timerJitter.samples[i];
+            int64_t val = jitterSamples[i];
             if (val < 20) cachedHistJitter[0]++;
             else if (val < 50) cachedHistJitter[1]++;
             else if (val < 100) cachedHistJitter[2]++;
@@ -388,10 +370,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
         }
 
         memset(cachedHistOversleep, 0, sizeof(cachedHistOversleep));
-        uint32_t oversleepIdx = telemetry::g_oversleep.index.load(std::memory_order_relaxed);
-        int oversleepLimit = oversleepIdx < telemetry::MetricBuffer::SIZE ? (int)oversleepIdx : telemetry::MetricBuffer::SIZE;
+        int64_t oversleepSamples[telemetry::MetricBuffer::SIZE]{};
+        const int oversleepLimit = telemetry::g_oversleep.CopySamples(oversleepSamples);
         for (int i = 0; i < oversleepLimit; i++) {
-            int64_t val = telemetry::g_oversleep.samples[i];
+            int64_t val = oversleepSamples[i];
             if (val < 50) cachedHistOversleep[0]++;
             else if (val < 100) cachedHistOversleep[1]++;
             else if (val < 250) cachedHistOversleep[2]++;

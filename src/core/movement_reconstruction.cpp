@@ -17,6 +17,67 @@ struct MovementLutSnapshot {
 
 static std::atomic<std::shared_ptr<const MovementLutSnapshot>> s_lut;
 
+static int SimulateStopDurationMs(double vx,
+                           double vy,
+                           int wishMode,
+                           double releaseVelocityWindow,
+                           const RuntimeConfig& rc) {
+    double curVx = std::abs(vx);
+    double curVy = std::abs(vy);
+    if (curVx <= releaseVelocityWindow) return 0;
+
+    double wishX = curVx > 0.0 ? -1.0 : 0.0;
+    double wishY = 0.0;
+    if (wishMode == 1) wishY = curVy > 0.0 ? 1.0 : 0.0;
+    else if (wishMode == 2) wishY = curVy > 0.0 ? -1.0 : 0.0;
+    else if (wishMode == 3) wishY = curVy > 0.0 ? -1.0 : 1.0;
+
+    const double wishMagnitude = std::sqrt(wishX * wishX + wishY * wishY);
+    if (wishMagnitude > 0.001) {
+        wishX /= wishMagnitude;
+        wishY /= wishMagnitude;
+    }
+
+    constexpr double dt = 1.0 / 64.0;
+    int ticks = 0;
+    double previousVx = curVx;
+    while (ticks < 100 && curVx > releaseVelocityWindow) {
+        previousVx = curVx;
+        const double speed = std::sqrt(curVx * curVx + curVy * curVy);
+        const double control = speed < rc.physStopSpeed ? rc.physStopSpeed : speed;
+        const double newSpeed = std::max(0.0, speed - control * rc.physFriction * dt);
+        const double frictionScale = speed > 0.0 ? newSpeed / speed : 0.0;
+
+        double frictionVx = curVx * frictionScale;
+        double frictionVy = curVy * frictionScale;
+        const double currentSpeed = frictionVx * wishX + frictionVy * wishY;
+        const double addSpeed = rc.physMaxSpeed - currentSpeed;
+        if (addSpeed > 0.0) {
+            const double accelSpeed = std::min(
+                rc.physAccelerate * dt * rc.physMaxSpeed,
+                addSpeed);
+            frictionVx += accelSpeed * wishX;
+            frictionVy += accelSpeed * wishY;
+        }
+
+        curVx = frictionVx;
+        curVy = frictionVy;
+        ++ticks;
+    }
+
+    double exactTicks = static_cast<double>(ticks);
+    if (ticks > 0 && curVx <= releaseVelocityWindow &&
+        previousVx > releaseVelocityWindow && previousVx != curVx) {
+        const double fraction =
+            (previousVx - releaseVelocityWindow) / (previousVx - curVx);
+        exactTicks = static_cast<double>(ticks - 1) + fraction;
+    }
+
+    const double pureMs = exactTicks * 15.625;
+    const double alignedMs = std::ceil(pureMs / 15.625) * 15.625;
+    return static_cast<int>(alignedMs + 0.5);
+}
+
 void InitLUT() {
     const RuntimeConfig& rc = rcfg::Get();
     auto next = std::make_shared<MovementLutSnapshot>();
@@ -78,67 +139,12 @@ void InitLUT() {
     for (int vx = 0; vx <= 250; ++vx) {
         for (int vy = 0; vy <= 250; ++vy) {
             for (int mode = 0; mode <= 3; ++mode) {
-                if (vx == 0 && vy == 0) {
-                    next->stop[vx][vy][mode] = 0;
-                    continue;
-                }
-                
-                double cur_vx = vx;
-                double cur_vy = vy;
-                
-                double wish_x = (vx > 0) ? -1.0 : 0.0;
-                double wish_y = 0.0;
-                if (mode == 1) wish_y = (vy > 0) ? 1.0 : 0.0;
-                else if (mode == 2) wish_y = (vy > 0) ? -1.0 : 0.0;
-                else if (mode == 3) wish_y = (vy > 0) ? -1.0 : 1.0;
-                
-                double w_mag = std::sqrt(wish_x*wish_x + wish_y*wish_y);
-                if (w_mag > 0.001) { wish_x /= w_mag; wish_y /= w_mag; }
-                
-                int ticks = 0;
-                double prev_vx = cur_vx;
-                
-                while (ticks < 100) {
-                    if (cur_vx <= cfg::RELEASE_VELOCITY_WINDOW) {
-                        break;
-                    }
-                    
-                    prev_vx = cur_vx;
-                    double speed = std::sqrt(cur_vx*cur_vx + cur_vy*cur_vy);
-                    
-                    double control = (speed < rc.physStopSpeed) ? rc.physStopSpeed : speed;
-                    double drop = control * rc.physFriction * dt;
-                    double newspeed = speed - drop;
-                    if (newspeed < 0) newspeed = 0;
-                    double f_scale = (speed > 0) ? (newspeed / speed) : 0;
-                    
-                    double f_vx = cur_vx * f_scale;
-                    double f_vy = cur_vy * f_scale;
-                    
-                    double currentspeed = f_vx * wish_x + f_vy * wish_y;
-                    double addspeed = rc.physMaxSpeed - currentspeed;
-                    
-                    if (addspeed > 0) {
-                        double accelspeed = rc.physAccelerate * dt * rc.physMaxSpeed;
-                        if (accelspeed > addspeed) accelspeed = addspeed;
-                        f_vx += accelspeed * wish_x;
-                        f_vy += accelspeed * wish_y;
-                    }
-                    
-                    cur_vx = f_vx;
-                    cur_vy = f_vy;
-                    ticks++;
-                }
-                
-                double exact_ticks = (double)ticks;
-                if (ticks > 0 && cur_vx <= cfg::RELEASE_VELOCITY_WINDOW && prev_vx > cfg::RELEASE_VELOCITY_WINDOW) {
-                    double frac = (prev_vx - cfg::RELEASE_VELOCITY_WINDOW) / (prev_vx - cur_vx);
-                    exact_ticks = (ticks - 1) + frac;
-                }
-                
-                double pure_ms = exact_ticks * 15.625;
-                double aligned_ms = std::ceil(pure_ms / 15.625) * 15.625;
-                next->stop[vx][vy][mode] = (int)(aligned_ms + 0.5);
+                next->stop[vx][vy][mode] = SimulateStopDurationMs(
+                    static_cast<double>(vx),
+                    static_cast<double>(vy),
+                    mode,
+                    cfg::RELEASE_VELOCITY_WINDOW,
+                    rc);
             }
         }
     }
@@ -149,10 +155,12 @@ void InitLUT() {
 
 void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int signY, const RuntimeConfig& rc, double& outVx, double& outVy) {
     (void)rc;
-    int ticksX = (int)(heldUsX / 15625);
-    int ticksY = (int)(heldUsY / 15625);
-    if (ticksX > 50) ticksX = 50;
-    if (ticksY > 50) ticksY = 50;
+    constexpr int64_t kTickUs = 15625;
+    constexpr int64_t kMaxHeldUs = 50 * kTickUs;
+    const int ticksX = static_cast<int>(
+        std::clamp(heldUsX, int64_t{0}, kMaxHeldUs) / kTickUs);
+    const int ticksY = static_cast<int>(
+        std::clamp(heldUsY, int64_t{0}, kMaxHeldUs) / kTickUs);
 
     auto lut = s_lut.load(std::memory_order_acquire);
     if (!lut) {
@@ -170,12 +178,63 @@ void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int sig
 
 int LookupStopDur2D(double vx, double vy, int wish_mode, bool crouch) {
     (void)crouch;
-    int idx_x = std::clamp((int)std::abs(vx), 0, 250);
-    int idx_y = std::clamp((int)std::abs(vy), 0, 250);
+    const auto velocityIndex = [](double value) {
+        if (std::isnan(value)) return 0;
+        if (!std::isfinite(value)) return 250;
+        const double magnitude = std::abs(value);
+        if (magnitude >= 250.0) return 250;
+        return static_cast<int>(magnitude);
+    };
+    const int idx_x = velocityIndex(vx);
+    const int idx_y = velocityIndex(vy);
     int mode = std::clamp(wish_mode, 0, 3);
     auto lut = s_lut.load(std::memory_order_acquire);
     if (!lut) return 0;
     return lut->stop[idx_x][idx_y][mode];
+}
+
+int CalculateStopDur2D(double vx,
+                       double vy,
+                       int wish_mode,
+                       bool crouch,
+                       double releaseVelocityWindow,
+                       const RuntimeConfig& rc) {
+    (void)crouch;
+    const double threshold = std::isfinite(releaseVelocityWindow)
+        ? std::clamp(releaseVelocityWindow, 0.0, rc.physMaxSpeed)
+        : cfg::RELEASE_VELOCITY_WINDOW;
+    return SimulateStopDurationMs(vx, vy, std::clamp(wish_mode, 0, 3), threshold, rc);
+}
+
+int ShapeBrakeDurationMs(int pureDurMs,
+                         const RuntimeConfig::BrakeProfile& profile,
+                         const RuntimeConfig& rc) {
+    if (pureDurMs <= 0) return 0;
+
+    const double scaled = static_cast<double>(pureDurMs) *
+                          profile.brake_bias_multiplier;
+    const double normalized = std::max(0.01, scaled / 31.25);
+    const double shaped = std::pow(normalized, profile.aggressiveness_curve) *
+                          31.25 + profile.authority_bias_ms;
+
+    // Do not cast an unbounded or non-finite double to int. Apart from being
+    // undefined behaviour, it can create a random negative/huge timer and an
+    // excessive synthetic hold.
+    if (!std::isfinite(shaped)) return rc.lutMaxMs;
+
+    const double compensated = shaped - static_cast<double>(rc.latencyMarginMs);
+    const int safeMaxMs = std::max(1, rc.lutMaxMs);
+    const int safeMinMs = std::clamp(rc.minStopMs, 1, safeMaxMs);
+    const double bounded = std::clamp(
+        compensated,
+        static_cast<double>(safeMinMs),
+        static_cast<double>(safeMaxMs));
+    return static_cast<int>(std::round(bounded));
+}
+
+int64_t ClampCounterOverlapUs(int64_t requestedOverlapUs, int64_t brakeUs) {
+    if (requestedOverlapUs <= 0 || brakeUs <= 100) return 0;
+    return std::min(requestedOverlapUs, brakeUs - 100);
 }
 
 double CalcIntentEfficiency(Key k, int64_t heldUs, const State& state, const RuntimeConfig& rc) {

@@ -5,6 +5,8 @@
 
 #include "types.h"
 #include "state.h"
+#include "target_platform.h"
+#include "injection.h"
 #include "build_config.h"
 #include <atomic>
 
@@ -28,16 +30,16 @@ extern std::atomic<uint32_t> dbgRenderCount;
 void Init(HWND hwnd);
 
 // ── Key event handlers (called from hook) ──
-void HandleKeyDown(Key k, bool routeSemantic);
-void HandleKeyUp(Key k, bool routeSemantic);
+void HandleKeyDown(Key k, bool routeSemantic,
+                   const target_platform::TargetIdentity& dispatchTarget);
+void HandleKeyUp(Key k, bool routeSemantic,
+                 const target_platform::TargetIdentity& dispatchTarget);
 
 // ── System key updates ──
 void OnSysKeyChange(bool isLCtrl, bool down, bool routeSemantic);
 void OnShiftChange(bool down, bool routeSemantic);
 void OnSpaceDown(bool routeSemantic);
 void OnSpaceUp();
-bool OnLButtonDown();
-void OnLButtonUp();
 
 
 void RebuildState();
@@ -50,7 +52,9 @@ void OnTimerExpired(Key k, uint64_t timerId);
 // ── Suspend/Resume ──
 void ToggleSuspend();
 bool IsSuspended();
-void ClearHeldKeys();
+void ClearHeldKeys(const target_platform::TargetIdentity& target);
+UINT ReconcilePendingOutput(
+    const target_platform::TargetIdentity& target);
 
 
 // ── State access ──

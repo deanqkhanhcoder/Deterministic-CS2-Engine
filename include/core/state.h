@@ -6,6 +6,7 @@
 
 #include "types.h"
 #include "config.h"
+#include "target_platform.h"
 #include <cstdint>
 #include <cstring>
 
@@ -44,6 +45,7 @@ struct alignas(64) State {
 
     // ── Timer tracking ──
     uint64_t expectedTimerId[5] = {};
+    target_platform::TargetIdentity expectedTimerTarget[5] = {};
     
     // ── System keys ──
     bool    sysLCtrl            = false;
@@ -70,7 +72,12 @@ struct alignas(64) State {
         generation[0] = generation[1] = 0;
         conflictEnteredTimeMs[0] = conflictEnteredTimeMs[1] = 0;
 
+        memset(expectedTimerId, 0, sizeof(expectedTimerId));
+        for (auto& target : expectedTimerTarget) target = {};
+
         sysLCtrl = sysC = false;
+        spacePhys = false;
+        suspended = false;
 
         walk = WalkState{};
         mem  = MemoryState{};

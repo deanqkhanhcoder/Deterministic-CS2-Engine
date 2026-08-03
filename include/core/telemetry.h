@@ -5,6 +5,7 @@
 #include <atomic>
 #include <algorithm>
 #include <string>
+#include <mutex>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
 #include <immintrin.h>
 #endif
@@ -44,13 +45,16 @@ struct MetricBuffer {
     static constexpr int SIZE = 128;
     std::atomic<uint32_t> index{0};
     int64_t samples[SIZE] = {0};
+    mutable std::mutex mutex;
 
     void Add(int64_t val) {
+        std::lock_guard<std::mutex> lock(mutex);
         uint32_t idx = index.fetch_add(1, std::memory_order_relaxed) % SIZE;
         samples[idx] = val;
     }
 
     void GetStats(int64_t& p50, int64_t& p99, int64_t& avg) const {
+        std::lock_guard<std::mutex> lock(mutex);
         int64_t temp[SIZE];
         uint32_t currIndex = index.load(std::memory_order_relaxed);
         int limit = currIndex < SIZE ? (int)currIndex : SIZE;
@@ -72,6 +76,7 @@ struct MetricBuffer {
     }
 
     int64_t GetAverageTenths() const {
+        std::lock_guard<std::mutex> lock(mutex);
         uint32_t currIndex = index.load(std::memory_order_relaxed);
         int limit = currIndex < SIZE ? (int)currIndex : SIZE;
         if (limit == 0) return 0;
@@ -80,6 +85,32 @@ struct MetricBuffer {
             sum += samples[i];
         }
         return (sum * 10LL) / limit;
+    }
+
+    int CopySamples(int64_t (&out)[SIZE]) const {
+        std::lock_guard<std::mutex> lock(mutex);
+        const uint32_t current = index.load(std::memory_order_relaxed);
+        const int limit = current < SIZE ? static_cast<int>(current) : SIZE;
+        for (int i = 0; i < limit; ++i) out[i] = samples[i];
+        return limit;
+    }
+
+    bool AnySince(uint32_t& cursor, bool& initialized,
+                  int64_t threshold) const {
+        std::lock_guard<std::mutex> lock(mutex);
+        const uint32_t current = index.load(std::memory_order_relaxed);
+        if (!initialized) {
+            cursor = current;
+            initialized = true;
+            return false;
+        }
+        uint32_t start = cursor;
+        if (current - start > SIZE) start = current - SIZE;
+        cursor = current;
+        for (uint32_t sample = start; sample < current; ++sample) {
+            if (samples[sample % SIZE] > threshold) return true;
+        }
+        return false;
     }
 };
 

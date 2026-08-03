@@ -6,6 +6,7 @@
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 #include <cstdint>
+#include <windows.h>
 
 namespace bhop {
 
@@ -27,8 +28,9 @@ enum class State : int {
 };
 
 // ── Lifecycle ──
-void Init();
-void Shutdown();   // Must be called before process exit — joins worker thread
+void Init(HWND injectionWindow); // Must run on injectionWindow owner thread
+void Shutdown();                 // Must run on same owner thread; joins worker
+void DrainInjectionRequests();   // Hook-owner message thread only
 
 // ── Queries (thread-safe) ──
 Mode        GetMode();        // [FIX R-6] Returns atomic snapshot

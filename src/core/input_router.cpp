@@ -14,7 +14,10 @@
 
 namespace engine {
 
-void HandleKeyDown(Key k, bool routeSemantic) {
+void HandleKeyDown(Key k, bool routeSemantic,
+                   const target_platform::TargetIdentity& dispatchTarget) {
+
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
 
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
@@ -34,11 +37,11 @@ void HandleKeyDown(Key k, bool routeSemantic) {
     int64_t nowMs = nowUs / 1000;
     Axis ax = keymap::KeyAxis[ki_k];
 
-    DLOG_TRACE(Runtime, "HandleKeyDown: %s (routeSemantic=%d)", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), routeSemantic);
+    DLOG_TRACE(Runtime, "HandleKeyDown: %s (routeSemantic=%d)", keymap::KeyName[ki_k], routeSemantic);
 
     bool _doNotify = false;
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
-    InjectionBatch batch;
+    InjectionBatch batch(dispatchTarget);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
 
@@ -83,14 +86,17 @@ void HandleKeyDown(Key k, bool routeSemantic) {
         }
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     _doNotify = true;
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  HANDLE KEY UP  (Â§16)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-void HandleKeyUp(Key k, bool routeSemantic) {
+void HandleKeyUp(Key k, bool routeSemantic,
+                 const target_platform::TargetIdentity& dispatchTarget) {
+
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
 
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
@@ -112,12 +118,12 @@ void HandleKeyUp(Key k, bool routeSemantic) {
     Key oppK  = keymap::Opposite[ki_k];
     int ki_opp = ki(oppK);
 
-    DLOG_TRACE(Runtime, "HandleKeyUp: %s (routeSemantic=%d)", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), routeSemantic);
+    DLOG_TRACE(Runtime, "HandleKeyUp: %s (routeSemantic=%d)", keymap::KeyName[ki_k], routeSemantic);
 
     bool _doNotify = false;
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
 
-    InjectionBatch batch;
+    InjectionBatch batch(dispatchTarget);
     {
         // --- PHYSICAL LAYER (Always Tracked) ---
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -162,7 +168,7 @@ void HandleKeyUp(Key k, bool routeSemantic) {
         }
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     _doNotify = true;
 }
 

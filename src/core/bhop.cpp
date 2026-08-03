@@ -11,6 +11,9 @@
 #include "state_engine.h"
 #include "config_io.h"
 #include "input_capture.h"
+#include "injection.h"
+#include "bhop_injection_gate.h"
+#include "bhop_injection_queue.h"
 #include <windows.h>
 #include <cmath>
 #include <cstdlib>
@@ -37,6 +40,9 @@ namespace bhop {
 static std::atomic<bool> s_spaceHeld{false};   // Physical Space key state
 static std::atomic<bool> s_running{false};      // Thread lifecycle flag
 static std::atomic<bool> s_waitingForSpaceRepress{false}; // Safe resume explicit state
+static std::atomic<HWND> s_injectionWindow{nullptr};
+static std::atomic<DWORD> s_injectionOwnerThreadId{0};
+static BhopInjectionQueue s_injectionQueue;
 
 // [FIX R-6] Atomic state for weak-memory correctness (ARM/other platforms)
 static std::atomic<State>   s_state{State::Idle};      // Written by worker, read by UI
@@ -102,6 +108,7 @@ static int64_t QpcNow() {
     return cnt.QuadPart;
 }
 
+#if MARCO_ENABLE_FORENSIC
 static int64_t StallThresholdTicks(const RuntimeConfig& cfg) {
     int modeIdx = cfg.bhopMode;
     if (modeIdx < 1 || modeIdx > 4) modeIdx = 4;
@@ -110,6 +117,7 @@ static int64_t StallThresholdTicks(const RuntimeConfig& cfg) {
     int thresholdMs = std::max(2000, expectedMs);
     return (int64_t)((double)thresholdMs / s_qpcToMs);
 }
+#endif
 
 // ══════════════════════════════════════════════════════════════════════
 //  PRECISION WAIT (3-phase: NtDelay + QPC spin + jitter comp)
@@ -164,51 +172,91 @@ static void PrecisionWait(double ms) {
 }
 
 static bool s_injectedSpaceState = false;
+static target_platform::TargetIdentity s_injectedSpaceTarget;
 
-static void InjectSpaceDown() {
-    if (s_injectedSpaceState) return;
-    INPUT inp = {};
-    inp.type = INPUT_KEYBOARD;
-    inp.ki.wVk = VK_SPACE;
-    inp.ki.wScan = 0x39;
-    inp.ki.dwFlags = KEYEVENTF_SCANCODE;
-    SendInput(1, &inp, sizeof(INPUT));
+static bool ValidateSequenceTarget(const void* context) noexcept {
+    const auto& sequenceTarget =
+        *static_cast<const target_platform::TargetIdentity*>(context);
+    return detail::IsExpectedTargetActive(
+        sequenceTarget,
+        [] { return target_platform::SampleStableForegroundIdentity(); },
+        [] { return target_platform::GetCurrentIdentity(); });
+}
+
+static bool WakeInjectionOwner(void*) {
+    const HWND hwnd = s_injectionWindow.load(std::memory_order_acquire);
+    return hwnd != nullptr &&
+           PostMessageW(hwnd, WM_BHOP_INJECTION_READY, 0, 0) != FALSE;
+}
+
+static uint32_t ExecuteInjectionOnOwnerThread(
+    BhopInjectionKind kind,
+    const target_platform::TargetIdentity& sequenceTarget,
+    void*) {
+    switch (kind) {
+        case BhopInjectionKind::SpaceDown:
+            return injection::SpaceDownForTarget(sequenceTarget);
+        case BhopInjectionKind::SpaceUp:
+            return injection::SpaceUpForTarget(sequenceTarget);
+        case BhopInjectionKind::WheelDown:
+            return injection::MouseWheelIf(-WHEEL_DELTA,
+                                           ValidateSequenceTarget,
+                                           &sequenceTarget);
+    }
+    return 0;
+}
+
+static bool InjectSpaceDown(const target_platform::TargetIdentity& sequenceTarget) {
+    if (s_injectedSpaceState) return true;
+    const BhopInjectionResult result =
+        s_injectionQueue.Submit(BhopInjectionKind::SpaceDown, sequenceTarget);
+    if (!result.executed || result.value != 1) return false;
     s_injectedSpaceState = true;
+    s_injectedSpaceTarget = sequenceTarget;
+    return true;
 }
 
-static void InjectSpaceUp() {
-    if (!s_injectedSpaceState) return;
-    INPUT inp = {};
-    inp.type = INPUT_KEYBOARD;
-    inp.ki.wVk = VK_SPACE;
-    inp.ki.wScan = 0x39;
-    inp.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-    SendInput(1, &inp, sizeof(INPUT));
+static bool InjectSpaceUp(const target_platform::TargetIdentity& sequenceTarget) {
+    if (!s_injectedSpaceState) return true;
+    const BhopInjectionResult result =
+        s_injectionQueue.Submit(BhopInjectionKind::SpaceUp, sequenceTarget);
+    if (!result.executed) return false;
+    // An executed but rejected release is owned by injection's pending-release
+    // queue. A cancelled request was never executed and retains local ownership.
     s_injectedSpaceState = false;
+    s_injectedSpaceTarget = {};
+    return result.value == 1;
 }
 
-static void InjectWheelDown() {
-    INPUT inp = {};
-    inp.type = INPUT_MOUSE;
-    inp.mi.dwFlags = MOUSEEVENTF_WHEEL;
-    inp.mi.mouseData = (DWORD)(-WHEEL_DELTA);
-    SendInput(1, &inp, sizeof(INPUT));
+static bool InjectWheelDown(const target_platform::TargetIdentity& sequenceTarget) {
+    const BhopInjectionResult result =
+        s_injectionQueue.Submit(BhopInjectionKind::WheelDown, sequenceTarget);
+    return result.executed && result.value == 1;
+}
+
+static bool IsSequenceTargetActive(const target_platform::TargetIdentity& sequenceTarget) {
+    return detail::IsExpectedTargetActive(
+        sequenceTarget,
+        [] { return target_platform::SampleStableForegroundIdentity(); },
+        [] { return target_platform::GetCurrentIdentity(); });
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  SCROLL BURST (Mode 4)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-static void ScrollBurst(const RuntimeConfig& cfg, HWND sequenceHwnd) {
-    InjectWheelDown();
+static void ScrollBurst(const RuntimeConfig& cfg,
+                        const target_platform::TargetIdentity& sequenceTarget) {
+    if (!InjectWheelDown(sequenceTarget)) return;
     PrecisionWait(cfg.spamIntervalMs);
-    if (capture::GetActiveWindowFast() != sequenceHwnd) return;
-    InjectWheelDown();
+    (void)InjectWheelDown(sequenceTarget);
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  DISPATCH JUMP
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-static void DispatchJump(const RuntimeConfig& cfg, HWND sequenceHwnd, int& seqCount) {
+static void DispatchJump(const RuntimeConfig& cfg,
+                         const target_platform::TargetIdentity& sequenceTarget,
+                         int& seqCount) {
     // [BUG #4] Receive snapshot of RuntimeConfig to guarantee timing/generation consistency
     int modeIdx = cfg.bhopMode;
     if (modeIdx < 1 || modeIdx > 4) modeIdx = 4;
@@ -236,19 +284,22 @@ static void DispatchJump(const RuntimeConfig& cfg, HWND sequenceHwnd, int& seqCo
     double compDelay = std::max(1.0, delayT - s_jitterAccum);
 
     // [BUG #5] Enforce active foreground target verification right before input dispatching
-    if (!s_spaceHeld.load() || capture::GetActiveWindowFast() != sequenceHwnd) return;
+    if (!s_spaceHeld.load() || !IsSequenceTargetActive(sequenceTarget)) return;
 
     if (modeIdx == (int)Mode::ScrollEmu) {
-        ScrollBurst(cfg, sequenceHwnd);
+        ScrollBurst(cfg, sequenceTarget);
         PrecisionWait(compDelay);
     } else {
-        InjectSpaceDown();
+        if (!InjectSpaceDown(sequenceTarget)) return;
         PrecisionWait(holdT);
         
-        if (capture::GetActiveWindowFast() != sequenceHwnd) return;
-        InjectSpaceUp();
+        if (!IsSequenceTargetActive(sequenceTarget)) {
+            (void)InjectSpaceUp(sequenceTarget);
+            return;
+        }
+        if (!InjectSpaceUp(sequenceTarget)) return;
         
-        if (capture::GetActiveWindowFast() != sequenceHwnd) return;
+        if (!IsSequenceTargetActive(sequenceTarget)) return;
         PrecisionWait(1);
         PrecisionWait(compDelay);
     }
@@ -260,7 +311,8 @@ static void DispatchJump(const RuntimeConfig& cfg, HWND sequenceHwnd, int& seqCo
 //  AIRBORNE WAIT â€” checks s_spaceHeld periodically
 //  Returns false if Space was released (should exit loop).
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-static bool AirborneWait(const RuntimeConfig& cfg, HWND sequenceHwnd) {
+static bool AirborneWait(const RuntimeConfig& cfg,
+                         const target_platform::TargetIdentity& sequenceTarget) {
     int remaining = cfg.airborneLockMs;
     while (remaining > 0 && s_running.load()) {
         int chunk = std::min(remaining, 10);  // 10ms chunks
@@ -268,11 +320,12 @@ static bool AirborneWait(const RuntimeConfig& cfg, HWND sequenceHwnd) {
         remaining -= chunk;
 
         // [BUG #5] Check active target focus to break out instantly if focus is lost
-        if (!s_spaceHeld.load() || s_waitingForSpaceRepress.load(std::memory_order_relaxed) || capture::GetActiveWindowFast() != sequenceHwnd)
+        if (!s_spaceHeld.load() || s_waitingForSpaceRepress.load(std::memory_order_relaxed) ||
+            !IsSequenceTargetActive(sequenceTarget))
             return false;
     }
     return s_spaceHeld.load() && !s_waitingForSpaceRepress.load(std::memory_order_relaxed) && 
-           capture::GetActiveWindowFast() == sequenceHwnd;
+           IsSequenceTargetActive(sequenceTarget);
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -297,26 +350,28 @@ static void BhopThreadFunc() {
 
         if (!s_running.load(std::memory_order_relaxed)) break;
         
-        // [BUG #BP-1] Snapshot sequence active target HWND and config at start
-        HWND sequenceHwnd = target_platform::GetCurrentIdentity().hwnd;
+        // Snapshot the full identity so HWND reuse cannot retarget an active sequence.
+        const auto sequenceTarget = target_platform::GetCurrentIdentity();
         RuntimeConfig jumpCfg = rcfg::Get();
-        if (!jumpCfg.bhopEnabled || !s_spaceHeld.load(std::memory_order_relaxed) || s_waitingForSpaceRepress.load(std::memory_order_relaxed)) continue;
+        if (!sequenceTarget.IsValid() || !IsSequenceTargetActive(sequenceTarget) ||
+            !jumpCfg.bhopEnabled || !s_spaceHeld.load(std::memory_order_relaxed) ||
+            s_waitingForSpaceRepress.load(std::memory_order_relaxed)) continue;
 
         DLOG_INFO(Runtime, "Bhop: sequence start");
 
         // â”€â”€ Bhop state machine loop â”€â”€
         int seqCount = 0;
         int64_t landingScanStartTick = 0;
+#if MARCO_ENABLE_FORENSIC
         int64_t lastProgressTick = QpcNow();
-        s_state.store(State::JumpStart, std::memory_order_relaxed);  // [FIX R-6] Atomic store
+#endif
+        s_state.store(State::JumpStart, std::memory_order_relaxed);
         s_jitterAccum = 0.0;
 
 
         while (s_spaceHeld.load() && s_running.load() && !s_waitingForSpaceRepress.load(std::memory_order_relaxed)) {
             // [BUG #BP-1] Passive target focus check inside loop
-            HWND activeWindow = capture::GetActiveWindowFast();
-            HWND currentTarget = target_platform::GetCurrentIdentity().hwnd;
-            if (activeWindow != sequenceHwnd || activeWindow != currentTarget) {
+            if (!IsSequenceTargetActive(sequenceTarget)) {
                 DLOG_WARN(Runtime, "Bhop: Focus lost/changed during sequence. Aborting jump thread injection.");
                 s_spaceHeld.store(false, std::memory_order_relaxed);
 #if MARCO_ENABLE_FORENSIC
@@ -352,36 +407,47 @@ static void BhopThreadFunc() {
             switch (s_state) {
                 case State::JumpStart:
                 {
+#if MARCO_ENABLE_FORENSIC
                     int beforeSeq = seqCount;
-                    DispatchJump(jumpCfg, sequenceHwnd, seqCount);
+#endif
+                    DispatchJump(jumpCfg, sequenceTarget, seqCount);
+#if MARCO_ENABLE_FORENSIC
                     if (seqCount != beforeSeq) {
                         lastProgressTick = QpcNow();
                     }
-                    s_state.store(State::AirborneLock, std::memory_order_relaxed);  // [FIX R-6] Atomic store
+#endif
+                    s_state.store(State::AirborneLock, std::memory_order_relaxed);
                     break;
                 }
 
                 case State::AirborneLock:
-                    if (!AirborneWait(jumpCfg, sequenceHwnd)) goto done;
+                    if (!AirborneWait(jumpCfg, sequenceTarget)) goto done;
+#if MARCO_ENABLE_FORENSIC
                     lastProgressTick = QpcNow();
-                    s_state.store(State::LandingScan, std::memory_order_relaxed);  // [FIX R-6] Atomic store
+#endif
+                    s_state.store(State::LandingScan, std::memory_order_relaxed);
                     landingScanStartTick = QpcNow();
                     break;
 
                 case State::LandingScan: {
+#if MARCO_ENABLE_FORENSIC
                     int beforeSeq = seqCount;
-                    DispatchJump(jumpCfg, sequenceHwnd, seqCount);
+#endif
+                    DispatchJump(jumpCfg, sequenceTarget, seqCount);
+#if MARCO_ENABLE_FORENSIC
                     if (seqCount != beforeSeq) {
                         lastProgressTick = QpcNow();
                     }
-                    
-                    double landingDuration = (double)jumpCfg.landingScanMs;
+#endif
 
+                    double landingDuration = (double)jumpCfg.landingScanMs;
                     int64_t nowTick = QpcNow();
                     double elapsedMs = (double)(nowTick - landingScanStartTick) * 1000.0 / (double)s_qpcFreq;
                     if (elapsedMs >= landingDuration) {
                         s_state.store(State::AirborneLock, std::memory_order_relaxed);
+#if MARCO_ENABLE_FORENSIC
                         lastProgressTick = nowTick;
+#endif
                         seqCount = 0; // Reset seq for the new jump rhythm
                     }
                     break;
@@ -393,13 +459,8 @@ static void BhopThreadFunc() {
         }
 
     done:
-        // [FIX BUG #1] Always release synthetic space to prevent stuck keys.
-        // If focus was lost, the injection goes to whatever window is now
-        // foreground â€” harmless since space-up is idempotent. A stuck
-        // synthetic space-down in the game is far worse than an extra
-        // space-up to a non-game window.
-        InjectSpaceUp();
-        s_state.store(State::Idle, std::memory_order_relaxed);  // [FIX R-6] Atomic store
+        (void)InjectSpaceUp(sequenceTarget);
+        s_state.store(State::Idle, std::memory_order_relaxed);
         DLOG_INFO(Runtime, "Bhop: sequence end [%d jumps]", seqCount);
     }
 }
@@ -409,8 +470,16 @@ static void BhopThreadFunc() {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 static std::atomic<bool> s_initialized{false};
 
-void Init() {
-    if (s_initialized.exchange(true)) return;
+void Init(HWND injectionWindow) {
+    const DWORD currentThreadId = GetCurrentThreadId();
+    if (injectionWindow == nullptr ||
+        GetWindowThreadProcessId(injectionWindow, nullptr) != currentThreadId ||
+        s_initialized.exchange(true)) {
+        return;
+    }
+    s_injectionOwnerThreadId.store(currentThreadId, std::memory_order_release);
+    s_injectionWindow.store(injectionWindow, std::memory_order_release);
+    s_injectionQueue.Start(WakeInjectionOwner, nullptr);
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     s_qpcFreq = freq.QuadPart;
@@ -428,19 +497,41 @@ void Init() {
     s_workerThread = std::thread(BhopThreadFunc);
 
     DLOG_INFO(Runtime, "Bhop engine initialized [QPCFreq=%lld, NtDelay=%s]",
-              s_qpcFreq, reinterpret_cast<int64_t>(s_ntDelay ? "OK" : "FALLBACK"));
+              s_qpcFreq, (s_ntDelay ? "OK" : "FALLBACK"));
 }
 
 void Shutdown() {
-    if (!s_initialized.exchange(false)) return;
+    if (!s_initialized.load(std::memory_order_acquire)) return;
+    if (GetCurrentThreadId() !=
+        s_injectionOwnerThreadId.load(std::memory_order_acquire)) {
+        DLOG_ERR(Runtime, "Bhop shutdown rejected: caller is not injection owner");
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         s_running.store(false);
     }
+    s_injectionQueue.Stop();
     s_cv.notify_all();
     if (s_workerThread.joinable())
         s_workerThread.join();
+    if (s_injectedSpaceState) {
+        (void)injection::SpaceUpForTarget(s_injectedSpaceTarget);
+        s_injectedSpaceState = false;
+        s_injectedSpaceTarget = {};
+    }
+    s_injectionWindow.store(nullptr, std::memory_order_release);
+    s_injectionOwnerThreadId.store(0, std::memory_order_release);
+    s_initialized.store(false, std::memory_order_release);
     DLOG_INFO(Runtime, "Bhop engine shutdown");
+}
+
+void DrainInjectionRequests() {
+    if (GetCurrentThreadId() !=
+        s_injectionOwnerThreadId.load(std::memory_order_acquire)) {
+        return;
+    }
+    s_injectionQueue.Drain(ExecuteInjectionOnOwnerThread, nullptr);
 }
 
 Mode        GetMode()      { return (Mode)rcfg::Get().bhopMode; }
@@ -453,7 +544,7 @@ const char* GetModeName()  {
 const char* GetStateName() { return s_stateNames[(int)s_state.load(std::memory_order_relaxed)]; }
 
 void ToggleEnabled() {
-    RuntimeConfig& cfg = rcfg::GetMutable();
+    RuntimeConfig cfg = rcfg::GetMutable();
     cfg.bhopEnabled = !cfg.bhopEnabled;
     bool isNowEnabled = cfg.bhopEnabled;
     rcfg::Apply(cfg);
@@ -471,17 +562,17 @@ void ToggleEnabled() {
         }
     }
     s_cv.notify_all();  // Wake worker to re-check predicate
-    DLOG_WARN(Runtime, "Bhop %s", reinterpret_cast<int64_t>(isNowEnabled ? "ENABLED" : "DISABLED"));
+    DLOG_WARN(Runtime, "Bhop %s", (isNowEnabled ? "ENABLED" : "DISABLED"));
 }
 
 void CycleMode() {
-    RuntimeConfig& cfg = rcfg::GetMutable();
+    RuntimeConfig cfg = rcfg::GetMutable();
     int m = cfg.bhopMode;
     m = (m >= (int)Mode::COUNT) ? 1 : m + 1;
     cfg.bhopMode = m;
     rcfg::Apply(cfg);
     config_io::Save(cfg);
-    DLOG_INFO(Runtime, "Bhop mode: %s", reinterpret_cast<int64_t>(s_modeNames[m]));
+    DLOG_INFO(Runtime, "Bhop mode: %s", s_modeNames[m]);
 }
 
 void OnSuspendChanged() {
