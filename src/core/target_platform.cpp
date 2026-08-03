@@ -1,8 +1,7 @@
 #include "target_platform.h"
 #include "debug_logger.h"
+#include "types.h"
 #include "topology.h"
-#include "telemetry.h"
-#include "timing.h"
 #include <atomic>
 #include <mutex>
 #include <cwctype>
@@ -10,7 +9,7 @@
 #include <thread>
 #include <condition_variable>
 #include <tlhelp32.h>
-#include "input_capture.h"
+
 
 namespace target_platform {
 
@@ -18,6 +17,13 @@ static const TargetProfile CS2_PROFILE = {
     L"CS2",
     {L"SDL_app", L"Valve001"},
     L"cs2.exe",
+    CAP_BHOP | CAP_CSTRAFE | CAP_SCROLL
+};
+
+static const TargetProfile VALORANT_PROFILE = {
+    L"Valorant",
+    {},
+    L"VALORANT-Win64-Shipping.exe",
     CAP_BHOP | CAP_CSTRAFE | CAP_SCROLL
 };
 
@@ -30,47 +36,19 @@ static const TargetProfile ROBLOX_PROFILE = {
 
 static const TargetProfile* s_registeredProfiles[] = {
     &CS2_PROFILE,
+    &VALORANT_PROFILE,
     &ROBLOX_PROFILE
 };
 
-// --- [BUG #1] Consistent Seqlock-Protected Target Publication ---
-struct TargetPublication {
-    const TargetProfile* profile = nullptr;
-    HWND hwnd = nullptr;
-    DWORD pid = 0;
-    uint64_t identity = 0;
-};
-
-struct AtomicTargetPublication {
-    std::atomic<const TargetProfile*> profile{nullptr};
-    std::atomic<HWND>                 hwnd{nullptr};
-    std::atomic<DWORD>                pid{0};
-    std::atomic<uint64_t>             identity{0};
-};
-
-static AtomicTargetPublication s_activePub;
-static std::atomic<uint32_t> s_pubSeq{0};
+static detail::TargetPublicationStore s_activePublication;
 
 static TargetPublication GetActivePublication() {
-    TargetPublication pub;
-    uint32_t seq0, seq1 = 0;
-    do {
-        seq0 = s_pubSeq.load(std::memory_order_acquire);
-        if (seq0 & 1) {
-            _mm_pause();
-            seq1 = seq0 - 1; // force repeat
-            continue;
-        }
+    return s_activePublication.Load();
+}
 
-        pub.profile  = s_activePub.profile.load(std::memory_order_relaxed);
-        pub.hwnd     = s_activePub.hwnd.load(std::memory_order_relaxed);
-        pub.pid      = s_activePub.pid.load(std::memory_order_relaxed);
-        pub.identity = s_activePub.identity.load(std::memory_order_relaxed);
-
-        std::atomic_thread_fence(std::memory_order_acq_rel);
-        seq1 = s_pubSeq.load(std::memory_order_relaxed);
-    } while (seq0 != seq1);
-    return pub;
+static void PublishTarget(const TargetProfile* profile,
+                          const TargetIdentity& target = {}) {
+    s_activePublication.Store(profile, target);
 }
 
 // --- [BUG #4] Bounded Resolver Queue State ---
@@ -83,6 +61,7 @@ static std::thread s_resolverThread;
 static std::mutex s_resolverMutex;
 static std::condition_variable s_resolverCv;
 static std::atomic<bool> s_resolverRunning{false};
+static std::atomic<HWND> s_notifyHwnd{nullptr};
 
 static void ResolverWorker();
 
@@ -94,11 +73,7 @@ static std::atomic<bool> s_initialized{false};
 
 void Init() {
     if (s_initialized.exchange(true)) return;
-    s_activePub.profile.store(nullptr, std::memory_order_relaxed);
-    s_activePub.hwnd.store(nullptr, std::memory_order_relaxed);
-    s_activePub.pid.store(0, std::memory_order_relaxed);
-    s_activePub.identity.store(0, std::memory_order_relaxed);
-    s_pubSeq.store(0, std::memory_order_release);
+    PublishTarget(nullptr);
 
     {
         std::lock_guard<std::mutex> lock(s_resolverMutex);
@@ -109,6 +84,10 @@ void Init() {
     s_resolverRunning.store(true, std::memory_order_relaxed);
     s_resolverThread = std::thread(ResolverWorker);
     s_scannerThread = std::thread(ProcessScannerWorker);
+}
+
+void SetNotifyWindow(HWND notifyHwnd) {
+    s_notifyHwnd.store(notifyHwnd, std::memory_order_release);
 }
 
 void Shutdown() {
@@ -126,6 +105,9 @@ void Shutdown() {
     if (s_scannerThread.joinable()) {
         s_scannerThread.join();
     }
+    PublishTarget(nullptr);
+    s_runningGamesMask.store(MASK_NONE, std::memory_order_release);
+    s_notifyHwnd.store(nullptr, std::memory_order_release);
 }
 
 static std::wstring ToLower(const std::wstring& str) {
@@ -138,9 +120,9 @@ static std::wstring ToLower(const std::wstring& str) {
 
 // --- [BUG #4] Overwrite-Safe Bounded Queue Implementation ---
 void ResolveTargetAsync(TargetIdentity identity) {
-    if (!identity.IsValid()) return;
     {
         std::lock_guard<std::mutex> lock(s_resolverMutex);
+        if (!s_resolverRunning.load(std::memory_order_acquire)) return;
         
         // [BUG #2] Prevent consecutive duplicate spam in the queue to avoid task poisoning
         bool duplicate = false;
@@ -162,7 +144,7 @@ void ResolveTargetAsync(TargetIdentity identity) {
             s_queueCount++;
         }
     }
-    s_resolverCv.notify_one();
+    s_resolverCv.notify_all();
 }
 
 static void ResolverWorker() {
@@ -182,9 +164,14 @@ static void ResolverWorker() {
             s_queueCount--;
         }
 
-        // [BUG #TP-2] Stale-task discard semantics: bypass ONLY if foreground window is valid and different
-        HWND fg = capture::GetActiveWindowFast();
-        if (!id.IsValid() || (fg != nullptr && id.hwnd != fg)) continue;
+        TargetIdentity foreground = TargetIdentity::FromWindow(GetForegroundWindow());
+        if (!detail::ShouldPublishResolution(id, foreground)) continue;
+        if (!id.IsValid()) {
+            PublishTarget(nullptr);
+            HWND notifyHwnd = s_notifyHwnd.load(std::memory_order_acquire);
+            if (notifyHwnd) PostMessageW(notifyHwnd, WM_TARGET_REFRESH_REQUEST, 0, 0);
+            continue;
+        }
 
         wchar_t className[256];
         if (!GetClassNameW(id.hwnd, className, 256)) continue;
@@ -231,32 +218,26 @@ static void ResolverWorker() {
             if (match) { matchedProfile = profile; break; }
         }
 
+        // Do not let a slow lookup publish a window that is no longer the
+        // foreground target. Newer queued focus events will resolve next.
+        foreground = TargetIdentity::FromWindow(GetForegroundWindow());
+        if (!detail::ShouldPublishResolution(id, foreground)) continue;
+
         // [BUG #6] Prevent late publication after shutdown has been initiated
         if (!s_resolverRunning.load(std::memory_order_relaxed)) continue;
 
-        // [BUG #1] Publish to Seqlock-protected structure for atomic, multi-variable consistency
-        uint32_t seq = s_pubSeq.load(std::memory_order_relaxed);
-        s_pubSeq.store(seq + 1, std::memory_order_relaxed);
-        std::atomic_thread_fence(std::memory_order_release);
-
         if (matchedProfile) {
-            s_activePub.profile.store(matchedProfile, std::memory_order_relaxed);
-            s_activePub.hwnd.store(id.hwnd, std::memory_order_relaxed);
-            s_activePub.pid.store(id.pid, std::memory_order_relaxed);
-            s_activePub.identity.store(id.identity, std::memory_order_relaxed);
+            PublishTarget(matchedProfile, id);
         } else {
-            s_activePub.profile.store(nullptr, std::memory_order_relaxed);
-            s_activePub.hwnd.store(nullptr, std::memory_order_relaxed);
-            s_activePub.pid.store(0, std::memory_order_relaxed);
-            s_activePub.identity.store(0, std::memory_order_relaxed);
+            PublishTarget(nullptr);
         }
-
-        std::atomic_thread_fence(std::memory_order_release);
-        s_pubSeq.store(seq + 2, std::memory_order_release);
 
         if (matchedProfile) {
-            DLOG_INFO(Runtime, "TargetPlatform: Resolved active profile: %ls (PID: %lu)", reinterpret_cast<int64_t>(matchedProfile->name.c_str()), static_cast<int64_t>(id.pid));
+            DLOG_INFO(Runtime, "TargetPlatform: Resolved active profile: %ls (PID: %lu)", matchedProfile->name.c_str(), id.pid);
         }
+
+        HWND notifyHwnd = s_notifyHwnd.load(std::memory_order_acquire);
+        if (notifyHwnd) PostMessageW(notifyHwnd, WM_TARGET_REFRESH_REQUEST, 0, 0);
     }
 }
 
@@ -267,20 +248,34 @@ const TargetProfile* GetActiveProfile() {
 }
 
 TargetIdentity GetCurrentIdentity() {
-    auto pub = GetActivePublication();
-    TargetIdentity id;
-    id.identity = pub.identity;
-    id.hwnd     = pub.hwnd;
-    id.pid      = pub.pid;
-    return id;
+    return GetActivePublication().target;
+}
+
+TargetIdentity SampleStableForegroundIdentity() {
+    const HWND firstHwnd = GetForegroundWindow();
+    const TargetIdentity firstIdentity = TargetIdentity::FromWindow(firstHwnd);
+    const HWND secondHwnd = GetForegroundWindow();
+    const TargetIdentity secondIdentity = TargetIdentity::FromWindow(secondHwnd);
+    return detail::IsStableForegroundSample(firstHwnd, firstIdentity,
+                                            secondHwnd, secondIdentity)
+        ? secondIdentity
+        : TargetIdentity{};
+}
+
+bool IsExpectedTargetActive(const TargetIdentity& expected) noexcept {
+    if (!expected.IsValid()) return false;
+    if (SampleStableForegroundIdentity() != expected) return false;
+    if (GetCurrentIdentity() != expected) return false;
+    return SampleStableForegroundIdentity() == expected;
 }
 
 DWORD GetCurrentTargetPid() {
-    return GetActivePublication().pid;
+    return GetActivePublication().target.pid;
 }
 
 uint32_t GetActiveCapabilities() {
-    return CAP_CSTRAFE | CAP_BHOP;
+    const TargetProfile* prof = GetActivePublication().profile;
+    return prof ? prof->capabilities : CAP_NONE;
 }
 
 void GetActiveTargetName(wchar_t* outBuf, size_t maxLen) {
@@ -296,9 +291,7 @@ void GetActiveTargetName(wchar_t* outBuf, size_t maxLen) {
 void ProcessScannerWorker() {
     topology::PinBackgroundThread();
     while (s_resolverRunning.load(std::memory_order_relaxed)) {
-#if MARCO_ENABLE_WATCHDOG
-        telemetry::g_heartbeatScanner.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
+
         uint32_t mask = MASK_NONE;
         HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (hSnap != INVALID_HANDLE_VALUE) {
@@ -309,6 +302,9 @@ void ProcessScannerWorker() {
                     if (_wcsicmp(pe.szExeFile, L"cs2.exe") == 0) {
                         mask |= MASK_CS2;
                     }
+                    else if (_wcsicmp(pe.szExeFile, L"VALORANT-Win64-Shipping.exe") == 0) {
+                        mask |= MASK_VALORANT;
+                    }
                     else if (_wcsicmp(pe.szExeFile, L"robloxplayerbeta.exe") == 0) {
                         mask |= MASK_ROBLOX;
                     }
@@ -318,17 +314,13 @@ void ProcessScannerWorker() {
         }
         s_runningGamesMask.store(mask, std::memory_order_relaxed);
         
-#if MARCO_ENABLE_WATCHDOG
-        telemetry::g_blockedScanner.store(true, std::memory_order_relaxed);
-#endif
-        for (int i = 0; i < 20; ++i) {
-            if (!s_resolverRunning.load(std::memory_order_relaxed)) break;
-            Sleep(100);
-        }
-#if MARCO_ENABLE_WATCHDOG
-        telemetry::g_blockedScanner.store(false, std::memory_order_relaxed);
-        telemetry::g_heartbeatScanner.store(timing::NowMs(), std::memory_order_relaxed);
-#endif
+
+        std::unique_lock<std::mutex> lock(s_resolverMutex);
+        s_resolverCv.wait_for(lock, std::chrono::milliseconds(2000), [] {
+            return !s_resolverRunning.load(std::memory_order_relaxed);
+        });
+        if (!s_resolverRunning.load(std::memory_order_relaxed)) break;
+
     }
 }
 

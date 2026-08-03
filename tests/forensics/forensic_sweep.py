@@ -8,6 +8,12 @@ RC_PHYS_MAX_SPEED = 250.0
 RC_PHYS_ACCELERATE = 5.5
 DT = 15.625 / 1000.0
 
+ARTIFACT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "artifacts"))
+
+def artifact_path(name):
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+    return os.path.join(ARTIFACT_DIR, name)
+
 def simulate_frame(cur_vx, cur_vy, wish_x, wish_y):
     speed = np.sqrt(cur_vx**2 + cur_vy**2)
     control = RC_PHYS_STOP_SPEED if speed < RC_PHYS_STOP_SPEED else speed
@@ -73,7 +79,7 @@ def test_axis_release_desync():
     plt.xlabel('X Velocity')
     plt.ylabel('Y Velocity')
     plt.grid(True)
-    plt.savefig('scratch/axis_desync_trajectory.png')
+    plt.savefig(artifact_path('axis_desync_trajectory.png'))
 
 def test_quantization_aliasing():
     # Sweep velocities and plot aligned ms
@@ -99,7 +105,7 @@ def test_quantization_aliasing():
     plt.xlabel('Initial Velocity')
     plt.ylabel('Bucket (ms)')
     plt.legend()
-    plt.savefig('scratch/quantization_aliasing.png')
+    plt.savefig(artifact_path('quantization_aliasing.png'))
 
 if __name__ == '__main__':
     test_axis_release_desync()

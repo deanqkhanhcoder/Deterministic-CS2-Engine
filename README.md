@@ -1,120 +1,175 @@
-<div align="center">
-  
-# Deterministic CS2 Engine (V26.1 Stable Release)
-### *Production-Grade Mathematical Physics Engine for Counter-Strike 2*
+# Marco Engine
 
-[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
-[![Determinism](https://img.shields.io/badge/Physics-100%25_Deterministic-blue.svg)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![C++20](https://img.shields.io/badge/Standard-C%2B%2B20-orange.svg)]()
+Marco is a Windows C++20 input-processing engine for FPS games, focused on Counter-Strike 2. It captures hardware input, tracks physical and logical state, routes semantic movement intent, runs Counter-Strafe and BHOP controllers, schedules precise timer callbacks, and injects output through `SendInput`.
 
-</div>
+The project is currently in V27.4 stabilization. Recent work focused on focus-state correctness, state reconciliation, runtime observability, forensic logging, path governance, and repository organization.
 
----
+## Current Status
 
-## 📖 Project Overview
+Version: `v27.4.0-stable`
 
-The **V26.1 Deterministic-CS2-Engine** is a heavily optimized, mathematically deterministic input simulation framework designed to perfectly synchronize hardware HID inputs with the Sub-Tick kinematics of Counter-Strike 2. 
+Status: Stabilization Candidate
 
-Unlike conventional macro engines that rely on arbitrary sleep timers, this engine operates on a mathematically proven Look-Up Table (LUT) driven by the actual CS2 Source 2 physics formulas. It guarantees exact, frame-perfect braking and strafing interpolation.
+Highlights:
 
----
+- Fixed Focus Desync / stale focus cache failure mode.
+- Unified runtime log, crash, capture, artifact, and binary folder architecture.
+- Added automatic forensic infrastructure.
+- Added `PROJECT_BRAIN.md` as the mandatory first-read knowledge base.
+- Added path governance through `workspace::` runtime path helpers.
 
-## 🎯 Architecture & Determinism
+Known State:
 
-### 1. Mathematical Physics Engine
-The core of V26 is the `input_router` and `movement_reconstruction`. The engine interprets raw keystrokes and computes the player's exact logical velocity vector (`Vx`, `Vy`). When a counter-strafe is requested, the engine calculates the exact theoretical deceleration curve and injects sub-tick opposing forces to achieve instant 0.0 velocity.
-- **Zero Mathematical Drift:** Offline regressions (`run_regression.py`) prove that our C++ physics model perfectly mirrors the 64-bit Python baseline with 0.0 drift.
-- **Sub-Tick Quantization:** Timer dispatchers are pinned to P-Cores utilizing custom spinlocks to circumvent standard OS scheduler jitter (typically 15.6ms), achieving sub-millisecond precision.
+- Stable in recent gameplay sessions.
+- Long-session certification is still in progress.
+- Not a production release claim.
+- Long-term 3-7 day runtime evidence is still required before release certification.
 
-### 2. Thread Model & Deadlock Elimination
-The engine runs asynchronously across specialized threads:
-1. **Low-Level Keyboard Hook Thread (`LowLevelKeyboardProc`):** Captures hardware input via `SetWindowsHookEx`.
-2. **Timer Spinlock Thread:** Executes scheduled counter-forces with extreme precision.
-3. **ImGui UI Thread:** Operates out-of-band to prevent UI lag from delaying physics.
+## Architecture Overview
 
-**Concurrency Invariants:** 
-- `s_stateMutex` (State Engine Lock) always precedes `s_spinlock` (Timing Lock). Circular waits are formally impossible.
-- **OS Re-entrancy Protection:** `SendInput` is *never* called while holding a mutex. All OS-bound events are buffered into an `InjectionBatch` and flushed after unlocking, eliminating all vectors for Ring-0/User-Mode deadlocks.
+Primary runtime flow:
 
-### 3. Features
-- **Perfect Counter-Strafe:** Calculates optimal reverse-key duration to perfectly cancel momentum.
-- **AutoFire Management:** Independent timer lifecycle management that defers to WASD priority.
-- **Bhop Interpolation:** Precision space-bar spam simulation decoupled from strafe vectors.
-- **Forensic Toolkit:** A full suite of Python analysis tools for empirical latency plotting.
+```text
+Hardware Input
+  -> Keyboard/Mouse Hook
+  -> Physical State
+  -> Semantic Router
+  -> Logical State
+  -> Axis Resolution
+  -> Counter-Strafe / BHOP
+  -> Timer System
+  -> SendInput
+```
 
----
+Core modules:
 
-## 🚀 Build Instructions
+- `Input Capture`: low-level Windows keyboard/mouse hooks, focus tracking, physical state capture.
+- `Input Router`: routes physical key events into semantic engine events when the target game is active.
+- `State Engine`: owns logical movement state, snapshots, suspend behavior, reconciliation, and watchdog integration.
+- `Counter-Strafe`: computes and schedules neutralizing movement key taps.
+- `BHOP`: manages space input state, jump dispatch, and BHOP worker lifecycle.
+- `Timer Engine`: handles precise delayed callbacks outside the Windows message queue path.
+- `Runtime Config`: manages profile and settings updates.
+- `Telemetry / Forensics`: records anomaly-focused runtime evidence.
+- `Workspace Path Service`: centralizes runtime output paths under `runtime/`.
 
-We strictly enforce **Out-of-Source** builds. The repository must remain pristine.
+## Counter-Strafe
 
-### Prerequisites
-- **MinGW-w64** (GCC 13+ with C++20 support)
-- **GNU Make**
+Counter-Strafe is the movement correction subsystem. It observes the resolved movement axis state and schedules short opposing input when a release or direction transition needs braking.
+
+Current stabilization notes:
+
+- Do not change Counter-Strafe gameplay behavior without runtime evidence.
+- Focus/state desync was the dominant recent failure mode, not a proven timer failure.
+- Profile switching recovered the bug because it forced a state rebuild and reconciliation path.
+
+## BHOP
+
+BHOP is the space-input subsystem. It tracks physical Space state, owns synthetic Space release safety, and runs a worker loop for configured BHOP behavior.
+
+Current stabilization notes:
+
+- Do not change BHOP gameplay behavior without runtime evidence.
+- Recent hardening changed only `BHOP_STALL` telemetry semantics, not BHOP timing or jump behavior.
+- BHOP failures observed during V27.4 investigation were consistent with focus/routing desync, not a proven BHOP timing defect.
+
+## Runtime Folders
+
+Runtime output must stay out of repository root. Canonical paths:
+
+```text
+runtime/
+  bin/        compiled executables and marco.ini
+  logs/       marco_debug.log and marco_YYYY-MM-DD_HH-MM-SS.log
+  crash/      crash logs and dumps
+  captures/   screenshots and runtime captures
+  artifacts/  generated reports, stress outputs, graphs, traces
+```
+
+Forbidden runtime output locations:
+
+- root `logs/`
+- root `FORENSIC_CAPTURE.log`
+- `runtime/runtime/`
+- build outputs committed as source files
+
+All runtime paths should originate from the `workspace::` path service.
+
+## Project Brain
+
+`PROJECT_BRAIN.md` is mandatory reading before any future AI or engineer changes the repository.
+
+It contains:
+
+- project purpose and version history;
+- high-level architecture;
+- directory and file maps;
+- subsystem ownership;
+- focus, profile, Counter-Strafe, BHOP, timer, and forensic flows;
+- known risks and current investigations;
+- debugging playbooks;
+- rules for future AI agents.
+
+Start here:
+
+```text
+PROJECT_BRAIN.md
+docs/REPORT_INDEX.md
+```
+
+## Reports And Forensics
+
+Reports live under:
+
+```text
+docs/reports/
+```
+
+Forensic investigations live under:
+
+```text
+docs/forensics/
+```
+
+Do not place new investigation reports in repository root. Add or update an index entry when adding durable documentation.
+
+## Build
+
+Prerequisites:
+
 - Windows 10/11 x64
+- MinGW-w64 with C++20 support
+- GNU Make
 
-### Compilation
-Open a PowerShell terminal in the repository root:
+Build commands:
 
-```bash
-# Debug Mode (Forensic Logging Enabled)
+```powershell
 make debug
-
-# Profile Mode (-O2, Optimized, retains some symbols)
 make profile
-
-# Release Mode (-O3, LTO, Zero Dead Code)
 make release
 ```
 
-The compiled binary will be placed safely in `runtime/bin/marco.exe`.
+Expected binaries:
 
----
-
-## 🧪 Forensic Validation Suite
-
-To ensure absolute determinism is maintained by all contributors, you must run the regression suite before submitting any Pull Requests.
-
-```bash
-python scripts/test/run_regression.py
-```
-This script compiles the `deterministic_simulator`, runs thousands of simulated ticks, and asserts that the C++ mathematical output precisely matches the `physics_v26_baseline.csv` golden master.
-
-You can also generate heatmaps of your performance drift:
-```bash
-python tests/forensics/replay_drift_heatmap.py runtime/artifacts/golden_output.csv runtime/artifacts/current_output.csv runtime/artifacts/heatmap.png
-```
-
----
-
-## 📂 Repository Structure
 ```text
-📦 Deterministic-CS2-Engine
- ┣ 📂 include/        # C++ Headers (Core Engine, UI)
- ┣ 📂 src/            # C++ Source Code
- ┣ 📂 scripts/        # Build & Regression Scripts
- ┣ 📂 tests/          # Forensic Python Tools & Baselines
- ┣ 📂 docs/           # Architecture Invariants & Reports
- ┣ 📂 runtime/        # Output directory (.gitignore'd)
- ┣ 📜 Makefile        # Multi-Configuration GNU Make
- ┗ 📜 README.md
+runtime/bin/marco_debug.exe
+runtime/bin/marco_profile.exe
+runtime/bin/marco.exe
 ```
 
----
+## Development Rules
 
-## 🤝 Contributing
+- Evidence first; no speculative gameplay patches.
+- Do not change Counter-Strafe, BHOP, timing, input routing, focus, or runtime config behavior as part of documentation or infrastructure cleanup.
+- Do not claim `PASS`, `FIXED`, `STABLE`, `PRODUCTION READY`, or release certification without execution evidence.
+- Mock stress tests are not gameplay proof.
+- Runtime output belongs under `runtime/`.
+- Repository documentation is part of the source of truth.
 
-We welcome pull requests! However, please read the [CONTRIBUTING.md](CONTRIBUTING.md) strictly. Any PR that breaks mathematical determinism or violates the concurrency lock DAG will be rejected. 
+## License
 
-Please review the [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+This project is licensed under the MIT License. See `LICENSE`.
 
-## 🛡️ Security
+## Disclaimer
 
-If you discover an OS-level vulnerability, lock inversion, or hook escape, please review [SECURITY.md](SECURITY.md) for responsible disclosure.
-
-## ⚖️ License
-This project is licensed under the [MIT License](LICENSE).
-
----
-*Disclaimer: This software simulates HID hardware input. Use responsibly. The authors assume no liability for account penalties or external consequences incurred through the use of this engine.*
+This software processes and injects input. Use responsibly and understand the rules and risks of any target environment before running it.

@@ -1,4 +1,4 @@
-#include "engine_internal.h"
+﻿#include "engine_internal.h"
 #include "movement_reconstruction.h"
 #include "runtime_config.h"
 #include "bhop.h"
@@ -14,13 +14,17 @@
 
 namespace engine {
 
-void HandleKeyDown(Key k, bool routeSemantic, int64_t enqueueUs) {
+void HandleKeyDown(Key k, bool routeSemantic,
+                   const target_platform::TargetIdentity& dispatchTarget) {
+
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
+
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
         Key k;
         ~ScopedTrace() {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             if (telemetry::IsEnabled()) {
                 telemetry::g_eventBuffer.Push(4, 0, (int32_t)(timing::NowUs() - startUs), (int32_t)k, 1); // Op = 1 (KeyDown)
             }
@@ -29,26 +33,22 @@ void HandleKeyDown(Key k, bool routeSemantic, int64_t enqueueUs) {
     } tracer{startUs, k};
 
     int ki_k = ki(k);
-    int64_t nowUs = enqueueUs; // Use exact physical time!
+    int64_t nowUs = startUs;
     int64_t nowMs = nowUs / 1000;
     Axis ax = keymap::KeyAxis[ki_k];
 
-    DLOG_TRACE(Runtime, "HandleKeyDown: %s (routeSemantic=%d)", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), routeSemantic);
+    DLOG_TRACE(Runtime, "HandleKeyDown: %s (routeSemantic=%d)", keymap::KeyName[ki_k], routeSemantic);
 
     bool _doNotify = false;
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
-    InjectionBatch batch;
+    InjectionBatch batch(dispatchTarget);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
 
         // --- PHYSICAL LAYER (Always Tracked) ---
         if (s_state.phys[ki_k]) return; // Already physically down
-        
-        CancelPendingShotLocked(batch); // Only cancel on true edge
-        
         s_state.phys[ki_k]     = true;
         s_state.downTimeUs[ki_k] = nowUs;
-        LOG_FIRE_TRACE("PHYS_MUTATION_DOWN", s_state.autoFire.fireGenerationId);
 
         timing::CancelTimer(k);
         s_state.expectedTimerId[ki(k)] = 0;
@@ -85,22 +85,25 @@ void HandleKeyDown(Key k, bool routeSemantic, int64_t enqueueUs) {
             s_state.logical[ki_k] = true;
         }
         PublishEngineState();
-        ValidateAxisState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     _doNotify = true;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  HANDLE KEY UP  (§16)
-// ════════════════════════════════════════════════════════════════
-void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs) {
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  HANDLE KEY UP  (Â§16)
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+void HandleKeyUp(Key k, bool routeSemantic,
+                 const target_platform::TargetIdentity& dispatchTarget) {
+
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
+
     int64_t startUs = timing::NowUs();
     struct ScopedTrace {
         int64_t startUs;
         Key k;
         ~ScopedTrace() {
-#if MARCO_ENABLE_TELEMETRY
+#if MARCO_ENABLE_FORENSIC
             if (telemetry::IsEnabled()) {
                 telemetry::g_eventBuffer.Push(4, 0, (int32_t)(timing::NowUs() - startUs), (int32_t)k, 0); // Op = 0 (KeyUp)
             }
@@ -108,19 +111,19 @@ void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs) {
         }
     } tracer{startUs, k};
 
-    int ki_k = ki(k);
-    int64_t nowUs = enqueueUs; // Use exact physical time!
+    int ki_k  = ki(k);
+    int64_t nowUs = startUs;
     int64_t nowMs = nowUs / 1000;
     Axis ax   = keymap::KeyAxis[ki_k];
     Key oppK  = keymap::Opposite[ki_k];
     int ki_opp = ki(oppK);
 
-    DLOG_TRACE(Runtime, "HandleKeyUp: %s (routeSemantic=%d)", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), routeSemantic);
+    DLOG_TRACE(Runtime, "HandleKeyUp: %s (routeSemantic=%d)", keymap::KeyName[ki_k], routeSemantic);
 
     bool _doNotify = false;
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
 
-    InjectionBatch batch;
+    InjectionBatch batch(dispatchTarget);
     {
         // --- PHYSICAL LAYER (Always Tracked) ---
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -131,13 +134,10 @@ void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs) {
                 ResolveAxis(ax, batch);
             }
         } else {
-            CancelPendingShotLocked(batch); // Only cancel on true edge
-            
             int64_t heldUs         = nowUs - s_state.downTimeUs[ki_k];
             s_state.heldDurUs[ki_k] = heldUs;
             s_state.phys[ki_k]     = false;
             s_state.downTimeUs[ki_k] = 0;
-            LOG_FIRE_TRACE("PHYS_MUTATION_UP", s_state.autoFire.fireGenerationId);
 
             // --- SEMANTIC ROUTING LAYER ---
             if (routeSemantic) {
@@ -155,7 +155,7 @@ void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs) {
 
                 bool strafed = false;
                 if (reason == ReleaseReason::Normal && !s_state.phys[ki_opp]) {
-                    strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch, enqueueUs);
+                    strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch);
                 }
 
                 if (!strafed && s_state.logical[ki_k]) {
@@ -167,13 +167,12 @@ void HandleKeyUp(Key k, bool routeSemantic, int64_t enqueueUs) {
             }
         }
         PublishEngineState();
-        ValidateAxisState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     _doNotify = true;
 }
 
-// ════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  RESOLVE AXIS
 void OnSysKeyChange(bool isLCtrl, bool down, bool routeSemantic) {
     // PHYSICAL TRUTH
@@ -217,13 +216,13 @@ void OnShiftChange(bool down, bool routeSemantic) {
 }
 
 void OnSpaceDown(bool routeSemantic) {
-    CancelPendingShot();
+
     // PHYSICAL TRUTH
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_state.spacePhys = true;
         if (routeSemantic) {
-            s_state.lastSpaceTimeMs = timing::NowMs();
+            
         }
         PublishEngineState();
     }

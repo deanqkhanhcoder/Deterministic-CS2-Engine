@@ -8,6 +8,12 @@ RC_PHYS_MAX_SPEED = 250.0
 RC_PHYS_ACCELERATE = 5.5
 DT = 15.625 / 1000.0
 
+ARTIFACT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "artifacts"))
+
+def artifact_path(name):
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+    return os.path.join(ARTIFACT_DIR, name)
+
 def simulate_stop(vx, vy, mode, window):
     cur_vx = vx
     cur_vy = vy
@@ -85,7 +91,7 @@ def generate_report():
     plt.ylabel('Duration (ms)')
     plt.legend()
     plt.grid(True)
-    plt.savefig('scratch/braking_curve.png')
+    plt.savefig(artifact_path('braking_curve.png'))
     
     # 2. Release-window sensitivity graph for v=250
     windows = np.linspace(0, 30, 300)
@@ -107,7 +113,7 @@ def generate_report():
     plt.axvline(x=17.0, color='r', linestyle=':', label='Breakthrough (17.0)')
     plt.legend()
     plt.grid(True)
-    plt.savefig('scratch/window_sensitivity.png')
+    plt.savefig(artifact_path('window_sensitivity.png'))
 
 if __name__ == '__main__':
     generate_report()

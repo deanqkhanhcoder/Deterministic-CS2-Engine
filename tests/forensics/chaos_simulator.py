@@ -8,6 +8,12 @@ RC_PHYS_MAX_SPEED = 250.0
 RC_PHYS_ACCELERATE = 5.5
 DT = 15.625 / 1000.0
 
+ARTIFACT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "artifacts"))
+
+def artifact_path(name):
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+    return os.path.join(ARTIFACT_DIR, name)
+
 def simulate_frame(cur_vx, cur_vy, wish_x, wish_y):
     speed = np.sqrt(cur_vx**2 + cur_vy**2)
     control = RC_PHYS_STOP_SPEED if speed < RC_PHYS_STOP_SPEED else speed
@@ -78,7 +84,7 @@ def analyze_subtick_edges():
     plt.ylabel('Bucket (ms)')
     plt.legend()
     plt.grid(True)
-    plt.savefig('scratch/subtick_quantization_scanner.png')
+    plt.savefig(artifact_path('subtick_quantization_scanner.png'))
 
 def analyze_diagonal_symmetry():
     # Case A: hold W long (250), tap D (64.45)
@@ -109,7 +115,7 @@ def analyze_diagonal_symmetry():
     plt.ylabel('Long Axis Velocity')
     plt.legend()
     plt.grid(True)
-    plt.savefig('scratch/diagonal_symmetry_audit.png')
+    plt.savefig(artifact_path('diagonal_symmetry_audit.png'))
 
 if __name__ == '__main__':
     analyze_subtick_edges()

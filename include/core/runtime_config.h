@@ -13,14 +13,9 @@ struct RuntimeConfig {
     int    quickTapMs        = 30;
     int    maxScaleMs        = 80;
     double crouchMult        = 0.75;
-    int    tapDelayMs        = 25;
-    int    sprayDelayMs      = 120;
-    int    burstThreshold    = 3;
-    int    spaceDelayMs      = 400;
     int    latencyMarginMs   = 6;
     int    minStopMs         = 4;
     int    lutMaxMs          = 350;
-    double subtickPaddingTicks = 0.0;
 
     // Walk Memory
     int    walkMemoryMs      = 130;
@@ -48,13 +43,8 @@ struct RuntimeConfig {
     double physStopSpeed     = 80.0;
     double physAccelerate    = 5.5;
 
-    // Watchdog
-    int    watchdogIntervalMs= 10000;
-    int    watchdogStuckMs   = 500;
 
-    // Click history
-    int    clickHistoryMax   = 8;
-    int    clickHistoryWindowMs = 500;
+    int    watchdogStuckMs   = 500;
 
     // Conflict penalty
     double conflictIncrement = 0.3;
@@ -124,15 +114,19 @@ namespace rcfg {
     // Returns by value to ensure snapshot consistency via seqlock.
     RuntimeConfig Get();
 
+    // Return a finite, range-checked runtime snapshot without publishing it.
+    // Exposed so config I/O and deterministic tests share the exact same policy.
+    RuntimeConfig Sanitize(const RuntimeConfig& newCfg);
+
     // Apply new config (called from main/UI thread only)
     void Apply(const RuntimeConfig& newCfg);
 
     // Get mutable reference for editing (UI thread only, before Apply)
-    RuntimeConfig& GetMutable();
+    // Returns an isolated editable snapshot. Call Apply() to publish it.
+    // A shared mutable staging reference allowed concurrent UI/hotkey edits
+    // to race and corrupt the seqlock writer sequence.
+    RuntimeConfig GetMutable();
 
     // Initialize with defaults
     void Init();
-
-    // Check if the global active state is eligible for disk persistence
-    bool CanPersistRuntimeState();
 }

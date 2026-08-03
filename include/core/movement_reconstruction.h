@@ -27,6 +27,26 @@ void InitLUT();
 // wish_mode: 0 = orthogonal released, 1 = orthogonal held, 2 = orthogonal counter-strafed
 int LookupStopDur2D(double vx, double vy, int wish_mode, bool crouch);
 
+// Deterministic stop duration using the active profile's accuracy threshold.
+// Kept separate from the legacy fixed-threshold LUT because profiles are
+// mutable at runtime.
+int CalculateStopDur2D(double vx,
+                       double vy,
+                       int wish_mode,
+                       bool crouch,
+                       double releaseVelocityWindow,
+                       const RuntimeConfig& rc);
+
+// Applies profile shaping without allowing floating-point overflow or a
+// duration beyond the configured LUT safety horizon. Returns zero when no
+// counter-strafe is required.
+int ShapeBrakeDurationMs(int pureDurMs,
+                         const RuntimeConfig::BrakeProfile& profile,
+                         const RuntimeConfig& rc);
+
+// Bounds release-key overlap without extending the computed counter hold.
+int64_t ClampCounterOverlapUs(int64_t requestedOverlapUs, int64_t brakeUs);
+
 // Calculates strength scale.
 
 // Stop strength = clamp(intentV / MAX_SPEED, [MIN, 1.0])

@@ -7,6 +7,12 @@ from dataclasses import dataclass
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+ARTIFACT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "artifacts"))
+
+def artifact_path(name):
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+    return os.path.join(ARTIFACT_DIR, name)
+
 def simulate_bucket(vel_x, vel_y):
     # This matches the C++ engine's quantization logic EXACTLY
     # Velocity magnitude
@@ -42,8 +48,9 @@ def run_sweep():
     plt.xlabel("Velocity (u/s)")
     plt.ylabel("Brake Duration (ms)")
     plt.grid(True)
-    plt.savefig(os.path.join(os.path.dirname(__file__), "quantization_heatmap.png"))
-    print("Heatmap generated at quantization_heatmap.png")
+    out_path = artifact_path("quantization_heatmap.png")
+    plt.savefig(out_path)
+    print(f"Heatmap generated at {out_path}")
     
     # Check for non-monotonicity (drift)
     for i in range(1, len(t_arr)):

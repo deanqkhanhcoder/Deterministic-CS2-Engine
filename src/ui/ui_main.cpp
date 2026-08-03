@@ -25,7 +25,6 @@
 #include "ui_layout.h"
 #if MARCO_ENABLE_FORENSIC_UI
 #include "ui_analysis.h"
-#include "ui_diagnostics.h"
 #endif
 
 // MinGW: link comctl32, shell32 via build command
@@ -34,7 +33,7 @@
 #if MARCO_ENABLE_FORENSIC_UI || MARCO_ENABLE_RELEASE_DASHBOARD
 namespace ui_dash { void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap); void OnMouseWheel(int delta); void Destroy(); }
 #endif
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
 namespace ui_analysis { void Paint(HDC hdc, RECT rc); void OnCommand(HWND hwnd, WPARAM wp); void OnMouseWheel(int delta); void ShowButtons(bool show); void Destroy(); void Init(); }
 #endif
 namespace ui_sett { void Paint(HDC hdc, RECT rc); void OnCommand(HWND hwnd, WPARAM wp); void Init(); void ShowButtons(bool show); void OnMouseWheel(int delta); }
@@ -78,7 +77,7 @@ static const wchar_t* CLASS_NAME = L"CS2MacroSuiteMain";
 
 static void UpdateTabVisibility() {
     ui_sett::ShowButtons(s_activeTab == theme::TAB_SETTINGS);
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
     ui_analysis::ShowButtons(s_activeTab == theme::TAB_ANALYSIS);
 #endif
 }
@@ -230,7 +229,7 @@ static void PaintStatusBar(HDC hdc) {
 
     // Row 2: hotkeys
     DrawText_(hdc, col, row2, theme::WIN_W - 24, 16,
-              L"F1:Bhop  F2:Mode  F3:Profile  F6:Suspend  F8:Exit",
+              L"F1:Bhop  F2:Mode  F3:Profile  F6:Suspend",
               theme::FG_HOTKEY, s_fontSmall, DT_LEFT);
 }
 
@@ -243,18 +242,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 #endif
     switch (msg) {
     case WM_PAINT: {
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::StartPaint();
-#endif
         engine::dbgLastRenderUs.store(timing::NowUs(), std::memory_order_relaxed);
         engine::dbgRenderCount.fetch_add(1, std::memory_order_relaxed);
 
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         if (!hdc) {
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::EndPaint();
-#endif
             return 0;
         }
 
@@ -280,7 +273,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     case theme::TAB_DASHBOARD: ui_dash::Paint(memDC, rcContent, s_snap); break;
 #endif
                     case theme::TAB_SETTINGS:  ui_sett::Paint(memDC, rcContent); break;
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
                     case theme::TAB_ANALYSIS:  ui_analysis::Paint(memDC, rcContent, s_snap); break;
 #endif
                 }
@@ -347,7 +340,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     case theme::TAB_DASHBOARD: ui_dash::Paint(hdc, rcContent, s_snap); break;
 #endif
                     case theme::TAB_SETTINGS:  ui_sett::Paint(hdc, rcContent); break;
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
                     case theme::TAB_ANALYSIS:  ui_analysis::Paint(hdc, rcContent, s_snap); break;
 #endif
                 }
@@ -386,25 +379,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         EndPaint(hwnd, &ps);
-#if MARCO_ENABLE_DIAGNOSTICS
-        ui_diagnostics::EndPaint();
-#endif
         return 0;
     }
 
     case WM_TIMER: {
         // Dashboard refresh timer (fallback heartbeat)
         if (wParam == 42) {
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::g_uiHeartbeatUs.store(timing::NowUs(), std::memory_order_relaxed);
-#endif
             engine::TakeSnapshot(s_snap);
             if (s_visible && !IsIconic(hwnd)) {
-#if MARCO_ENABLE_DIAGNOSTICS
-                ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
                 InvalidateRect(hwnd, nullptr, FALSE);
-#endif
             }
         }
         return 0;
@@ -419,22 +402,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (newTab >= 0 && newTab < theme::TAB_COUNT && newTab != s_activeTab) {
                 s_activeTab = newTab;
                 UpdateTabVisibility();
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
                 if (s_activeTab == theme::TAB_ANALYSIS) {
                     ui_analysis::ResetScroll();
                 }
 #endif
-#if MARCO_ENABLE_DIAGNOSTICS
-                ui_diagnostics::TrackInvalidate(hwnd, nullptr, TRUE);
-#else
                 InvalidateRect(hwnd, nullptr, TRUE);
-#endif
             }
             return 0;
         }
         // Forward to settings/log/analysis for button clicks
         if (s_activeTab == theme::TAB_SETTINGS) ui_sett::OnCommand(hwnd, MAKEWPARAM(0, 0));
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
         if (s_activeTab == theme::TAB_ANALYSIS) ui_analysis::OnCommand(hwnd, MAKEWPARAM(0, 0));
 #endif
         break;
@@ -452,7 +431,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         // Forward to active tab
         if (s_activeTab == theme::TAB_SETTINGS) ui_sett::OnCommand(hwnd, wParam);
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
         if (s_activeTab == theme::TAB_ANALYSIS) ui_analysis::OnCommand(hwnd, wParam);
 #endif
         return 0;
@@ -482,15 +461,22 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (s_visible && !IsIconic(hwnd)) {
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
             UpdateWindow(hwnd);
         }
         return 0;
     }
+
+    case WM_EMERGENCY_UNHOOK:
+        PostMessage(s_msgHwnd, WM_EMERGENCY_UNHOOK, 0, 0);
+        return 0;
+
+    case WM_ANALYSIS_ETW_START_FAILED:
+        MessageBoxW(hwnd,
+                    L"Failed to start ETW Kernel Logger.\n\nERROR_ACCESS_DENIED.\n\nYou must run CS2 Macro Suite as an Administrator to use ETW Diagnostics.",
+                    L"Access Denied",
+                    MB_ICONERROR | MB_TOPMOST);
+        return 0;
 
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED && rcfg::Get().minimizeToTray) {
@@ -559,33 +545,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 #if MARCO_ENABLE_FORENSIC_UI || MARCO_ENABLE_RELEASE_DASHBOARD
         if (s_activeTab == theme::TAB_DASHBOARD) {
             ui_dash::OnMouseWheel(delta);
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackScroll();
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
         }
 #endif
-#if MARCO_ENABLE_ETW
-        else if (s_activeTab == theme::TAB_ANALYSIS) {
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
+        if (s_activeTab == theme::TAB_ANALYSIS) {
             ui_analysis::OnMouseWheel(delta);
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackScroll();
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
         }
 #endif
-        else if (s_activeTab == theme::TAB_SETTINGS) {
+        if (s_activeTab == theme::TAB_SETTINGS) {
             ui_sett::OnMouseWheel(delta);
-#if MARCO_ENABLE_DIAGNOSTICS
-            ui_diagnostics::TrackScroll();
-            ui_diagnostics::TrackInvalidate(hwnd, nullptr, FALSE);
-#else
             InvalidateRect(hwnd, nullptr, FALSE);
-#endif
         }
         return 0;
     }
@@ -670,7 +641,7 @@ HWND Create(HINSTANCE hInst, HWND msgHwnd) {
 
     // Init sub-modules
     ui_sett::Init();
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
     ui_analysis::Init();
 #endif
     UpdateTabVisibility();
@@ -699,7 +670,7 @@ void Destroy() {
 #if MARCO_ENABLE_FORENSIC_UI || MARCO_ENABLE_RELEASE_DASHBOARD
     ui_dash::Destroy();
 #endif
-#if MARCO_ENABLE_ETW
+#if MARCO_ENABLE_FORENSIC_UI && MARCO_ENABLE_ETW
     ui_analysis::Destroy();
 #endif
     if (s_fontTitle) { DeleteObject(s_fontTitle); s_fontTitle = nullptr; }

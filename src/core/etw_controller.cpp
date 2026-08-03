@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <algorithm>
+#include <mutex>
 #include <tdh.h>
 #include "workspace.h"
 
@@ -24,16 +25,18 @@ struct TraceProperties {
 };
 
 static TraceSession s_globalEtwSession;
+static std::mutex s_globalEtwMutex;
 static const std::wstring KERNEL_TRACE_FILE = L"performance_trace.etl";
 
 bool StartGlobalTrace() {
+    std::lock_guard<std::mutex> lock(s_globalEtwMutex);
     TraceSession& session = s_globalEtwSession;
     if (session.isRunning) return true;
 
     // NT Kernel Logger is the ONLY session that can capture CSwitch and DPCs
     session.sessionName = KERNEL_LOGGER_NAMEW;
-    workspace::EnsureLogDirectoryExists();
-    session.logFilePath = workspace::GetLogRootW() + KERNEL_TRACE_FILE;
+    workspace::EnsureArtifactDirectoryExists();
+    session.logFilePath = workspace::GetArtifactRootW() + KERNEL_TRACE_FILE;
 
     ULONG bufferSize = sizeof(EVENT_TRACE_PROPERTIES) + 
                        (session.sessionName.length() + 1) * sizeof(wchar_t) + 
@@ -50,7 +53,7 @@ bool StartGlobalTrace() {
     // Enable DPC and Interrupt tracing only
     props->EnableFlags = EVENT_TRACE_FLAG_DPC | EVENT_TRACE_FLAG_INTERRUPT;
     
-    props->LogFileMode = EVENT_TRACE_FILE_MODE_SEQUENTIAL;
+    props->LogFileMode = EVENT_TRACE_FILE_MODE_CIRCULAR;
     props->MaximumFileSize = 100; // 100 MB max
     props->MinimumBuffers = 16;
     props->MaximumBuffers = 64;
@@ -62,27 +65,28 @@ bool StartGlobalTrace() {
     // Copy logger name into buffer for STOP command
     wcscpy_s(reinterpret_cast<wchar_t*>(buffer.data() + props->LoggerNameOffset), session.sessionName.length() + 1, session.sessionName.c_str());
 
-    // First try to stop any existing dangling session
-    ControlTraceW(0, KERNEL_LOGGER_NAMEW, props, EVENT_TRACE_CONTROL_STOP);
-
     // Now set up paths for StartTraceW
     props->LogFileNameOffset = sizeof(EVENT_TRACE_PROPERTIES) + (session.sessionName.length() + 1) * sizeof(wchar_t);
     wcscpy_s(reinterpret_cast<wchar_t*>(buffer.data() + props->LogFileNameOffset), session.logFilePath.length() + 1, session.logFilePath.c_str());
 
     ULONG status = StartTraceW(&session.handle, KERNEL_LOGGER_NAMEW, props);
     if (status != ERROR_SUCCESS) {
+        // StartTraceW does not grant ownership on failure. Discard any output
+        // handle so StopGlobalTrace can never stop an existing foreign logger.
+        session.handle = 0;
         DLOG_ERR(ETW, "Failed to start NT Kernel Logger ETW session. Error: %lu (Are you running as Administrator?)", status);
         return false;
     }
 
     session.isRunning = true;
-    DLOG_INFO(ETW, "Started ETW Kernel Trace: %ls", reinterpret_cast<int64_t>(session.logFilePath.c_str()));
+    DLOG_INFO(ETW, "Started ETW Kernel Trace: %ls", session.logFilePath.c_str());
     return true;
 }
 
 bool StopGlobalTrace() {
+    std::lock_guard<std::mutex> lock(s_globalEtwMutex);
     TraceSession& session = s_globalEtwSession;
-    if (!session.isRunning && session.handle == 0) return true;
+    if (!session.isRunning) return true;
 
     ULONG bufferSize = sizeof(EVENT_TRACE_PROPERTIES) + 1024;
     std::vector<uint8_t> buffer(bufferSize, 0);
@@ -101,11 +105,12 @@ bool StopGlobalTrace() {
 
     session.isRunning = false;
     session.handle = 0;
-    DLOG_INFO(ETW, "Stopped ETW Trace: %ls", reinterpret_cast<int64_t>(session.sessionName.c_str()));
+    DLOG_INFO(ETW, "Stopped ETW Trace: %ls", session.sessionName.c_str());
     return true;
 }
 
 bool IsGlobalTraceRunning() {
+    std::lock_guard<std::mutex> lock(s_globalEtwMutex);
     return s_globalEtwSession.isRunning;
 }
 
@@ -227,7 +232,7 @@ bool AnalyzeTrace(const std::wstring& logFile, TraceAnalysis& outAnalysis) {
     
     TRACEHANDLE handle = OpenTraceW(&log);
     if (handle == INVALID_PROCESSTRACE_HANDLE) {
-        DLOG_ERR(ETW, "Failed to open ETW trace for analysis: %ls", reinterpret_cast<int64_t>(logFile.c_str()));
+        DLOG_ERR(ETW, "Failed to open ETW trace for analysis: %ls", logFile.c_str());
         return false;
     }
     

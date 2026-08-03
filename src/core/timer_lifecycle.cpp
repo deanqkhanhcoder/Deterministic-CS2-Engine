@@ -15,82 +15,69 @@
 namespace engine {
 
 void OnTimerExpired(Key k, uint64_t expectedTimerId) {
-    if (k == Key::Mouse1) {
-        {
-            std::lock_guard<std::mutex> lock(s_stateMutex);
-            if (s_state.autoFire.state != FireState::Stabilizing || s_state.autoFire.expectedShotId != expectedTimerId) {
-                return; // Stale or cancelled shot
-            }
-            DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=1 new=2 gen=%llu", s_state.autoFire.fireGenerationId);
-            s_state.autoFire.state = FireState::Fired;
-            s_state.autoFire.hasDispatchedShot = true;
-            LOG_FIRE_TRACE("SHOT_DISPATCH", s_state.autoFire.fireGenerationId);
-        }
-        
-        // Inject the mouse click!
-        INPUT input = {};
-        input.type = INPUT_MOUSE;
-        input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        input.mi.dwExtraInfo = 0x1337BEEF; // Mark as injected so we don't swallow it again
-        SendInput(1, &input, sizeof(INPUT));
-        DLOG_TRACE(Runtime, "AutoFire Executed: Left Down injected (1 quantum delay)");
-        
-        // [FIX BUG #2] DO NOT CALL CancelPendingShot() HERE
-        // The brake routine needs to continue running until maxBrakeUs completes.
-        // Movement will be restored naturally when the counter keys expire below.
-        return;
-    }
-
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
     bool _doNotify = false;
     int ki_k = ki(k);
-    DLOG_TRACE(Runtime, "OnTimerExpired: Executing release for %s", reinterpret_cast<int64_t>(keymap::KeyName[ki_k]));
+    DLOG_TRACE(Runtime, "OnTimerExpired: Executing release for %s", keymap::KeyName[ki_k]);
     struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
     InjectionBatch batch;
     
+#if MARCO_ENABLE_FORENSIC
+    telemetry::g_timersExecuted.fetch_add(1, std::memory_order_relaxed);
+#endif
+
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         if (expectedTimerId != 0 && s_state.expectedTimerId[ki_k] != expectedTimerId) {
             DLOG_TRACE(Runtime, "OnTimerExpired: Ignoring stale callback for %s (expected=%llu, actual=%llu)",
-                       reinterpret_cast<int64_t>(keymap::KeyName[ki_k]), s_state.expectedTimerId[ki_k], expectedTimerId);
+                       keymap::KeyName[ki_k], s_state.expectedTimerId[ki_k], expectedTimerId);
+#if MARCO_ENABLE_FORENSIC
+            telemetry::ForensicEvent evRej = { telemetry::ForensicTrapType::TIMER_REJECTED, GetCurrentThreadId(), timing::NowUs(), (int32_t)ki_k, (uint32_t)(expectedTimerId & 0xFFFFFFFF), (uint32_t)(s_state.expectedTimerId[ki_k] & 0xFFFFFFFF), false };
+            telemetry::g_forensicBuffer.Push(evRej);
+#endif
             return;
         }
+        batch.expectedTarget = s_state.expectedTimerTarget[ki_k];
+        s_state.expectedTimerId[ki_k] = 0;
+        s_state.expectedTimerTarget[ki_k] = {};
         
-        // Release logical key
+        // Release the injected counter key if it's not physically held
         if (s_state.logical[ki_k] && !s_state.phys[ki_k]) {
             s_state.logical[ki_k] = false;
             batch.push(k, false);
         }
         
-        // [FIX BUG #2] Restore movement if this was the last counter key of a fired shot
-        if (s_state.autoFire.state == FireState::Fired) {
-            if (s_state.autoFire.injectedCounterMask & (1 << ki_k)) {
-                s_state.autoFire.injectedCounterMask &= ~(1 << ki_k);
-                
-                // If all counter keys have finished braking, restore originally held movement keys
-                if (s_state.autoFire.injectedCounterMask == 0) {
-                    for (int i = 0; i < 4; ++i) {
-                        if (s_state.autoFire.suspendedMovementMask & (1 << i)) {
-                            if (s_state.phys[i]) {
-                                batch.push(static_cast<Key>(i), true);
-                                s_state.logical[i] = true;
-                            }
-                        }
-                    }
-                    s_state.autoFire.suspendedMovementMask = 0;
-                    DLOG_TRACE(Injection, "[FIRE_TRACE] FIRESTATE_TRANSITION old=%d new=3 gen=%llu", (int)s_state.autoFire.state, s_state.autoFire.fireGenerationId);
-                    s_state.autoFire.state = FireState::Restoring;
-                    LOG_FIRE_TRACE("MOVEMENT_RESTORE", s_state.autoFire.fireGenerationId);
-                    DLOG_TRACE(Runtime, "AutoFire Brake Finished: Movement Restored");
-                }
-            }
+        // Restore opposite key if it's physically held
+        Key oppKey = keymap::Opposite[ki_k];
+        int ki_opp = ki(oppKey);
+        if (s_state.phys[ki_opp] && !s_state.logical[ki_opp]) {
+            s_state.logical[ki_opp] = true;
+            batch.push(oppKey, true);
+        }
+        
+        // Update axis state
+        Axis ax = keymap::KeyAxis[ki_k];
+        Key posK = keymap::AxisPosKey[ai(ax)];
+        Key negK = keymap::AxisNegKey[ai(ax)];
+        bool posL = s_state.logical[ki(posK)];
+        bool negL = s_state.logical[ki(negK)];
+        
+        if (posL && negL) {
+            s_state.axisState[ai(ax)] = AxisState::Conflict;
+        } else if (posL) {
+            s_state.axisState[ai(ax)] = AxisState::Positive;
+        } else if (negL) {
+            s_state.axisState[ai(ax)] = AxisState::Negative;
+        } else {
+            s_state.axisState[ai(ax)] = AxisState::None;
         }
         
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     _doNotify = true;
 }
 
-// ── SYSTEM KEY HANDLERS ──
+// â”€â”€ SYSTEM KEY HANDLERS â”€â”€
 
 } // namespace engine

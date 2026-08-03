@@ -15,8 +15,10 @@
 namespace engine {
 
 void ToggleSuspend() {
-    CancelPendingShot();
-    InjectionBatch batch;
+
+    std::unique_lock<std::mutex> operationLock(s_operationMutex);
+
+    InjectionBatch batch(target_platform::GetCurrentIdentity());
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         s_state.suspended = !s_state.suspended;
@@ -27,7 +29,8 @@ void ToggleSuspend() {
         }
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
+    operationLock.unlock();
     if (!s_suspendedAtomic.load(std::memory_order_acquire)) {
         // Reinstall hooks if they were uninstalled by watchdog/fail-safe
         capture::Reinstall();
@@ -36,20 +39,56 @@ void ToggleSuspend() {
     NotifyUI();
 }
 
-void ClearHeldKeys() {
-    CancelPendingShot();
-    InjectionBatch batch;
+void ClearHeldKeys(const target_platform::TargetIdentity& target) {
+
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
+
+    InjectionBatch batch(target);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         ReconcileInternal(true, batch);
         PublishEngineState();
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
 }
 
 // Unified Focus Reconciliation
+static void ReconcileLogicalStateFromPhysical(InjectionBatch& batch) {
+    // 1. Re-sync Bhop if Space is physically held
+    bhop::ForceSpaceSync(s_state.spacePhys);
+
+    // 2. Re-sync WASD
+    for (int i = 0; i < 4; ++i) {
+        Key k = static_cast<Key>(i);
+        if (s_state.phys[i]) {
+            if (!s_state.logical[i]) {
+                if (s_state.walk.shiftDown) {
+                    s_state.walk.startTimeUs[i] = timing::NowUs();
+                }
+                s_state.logical[i] = true;
+                batch.push(k, true);
+            }
+        } else {
+            if (s_state.logical[i]) {
+                timing::CancelTimer(k);
+                s_state.expectedTimerId[i] = 0;
+                batch.push(k, false);
+                s_state.logical[i] = false;
+            }
+        }
+    }
+    
+    // Reset axis state and resolve to naturally apply logic
+    s_state.axisState[0] = AxisState::None;
+    s_state.axisState[1] = AxisState::None;
+    ResolveAxis(Axis::X, batch);
+    ResolveAxis(Axis::Y, batch);
+}
+
 void RebuildState() {
+    std::lock_guard<std::mutex> operationLock(s_operationMutex);
     DLOG_INFO(Runtime, "Rebuilding semantic state from physical truth...");
+    const auto activeTarget = target_platform::GetCurrentIdentity();
     
     // Sync cached physical states with hardware physical truth (prevents stuck keys via Admin window hook bypass)
     bool snapSpace = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
@@ -61,8 +100,8 @@ void RebuildState() {
     bool snapLShift = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
     bool snapLCtrl = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
     bool snapC = (GetAsyncKeyState('C') & 0x8000) != 0;
-    
-    InjectionBatch batch;
+
+    InjectionBatch batch(activeTarget);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
         
@@ -75,44 +114,30 @@ void RebuildState() {
         s_state.walk.shiftDown = snapLShift;
         s_state.sysLCtrl = snapLCtrl;
         s_state.sysC = snapC;
-        
-        // Re-sync Bhop if Space is physically held
-        if (s_state.spacePhys) {
-            bhop::OnSpaceDown();
-        } else {
-            bhop::OnSpaceUp();
-        }
 
-        // Re-sync WASD
-        for (int i = 0; i < 4; ++i) {
-            Key k = static_cast<Key>(i);
-            if (s_state.phys[i]) {
-                if (!s_state.logical[i]) {
-                    if (s_state.walk.shiftDown) s_state.walk.startTimeUs[i] = timing::NowUs();
-                    batch.push(k, true);
-                    s_state.logical[i] = true;
-                }
-            } else {
-                if (s_state.logical[i]) {
-                    timing::CancelTimer(k);
-                    s_state.expectedTimerId[i] = 0;
-                    batch.push(k, false);
-                    s_state.logical[i] = false;
-                }
-            }
-        }
-        ResolveAxis(Axis::X, batch);
-        ResolveAxis(Axis::Y, batch);
+        telemetry::ForensicEvent evBefore = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0,
+            (uint32_t)(s_state.phys[0] | (s_state.phys[1] << 1) | (s_state.phys[2] << 2) | (s_state.phys[3] << 3)),
+            (uint32_t)(s_state.logical[0] | (s_state.logical[1] << 1) | (s_state.logical[2] << 2) | (s_state.logical[3] << 3)),
+            true };
+        telemetry::g_forensicBuffer.Push(evBefore);
+
+        // Re-sync using the exact physical truth
+        ReconcileLogicalStateFromPhysical(batch);
         PublishEngineState();
+
+        telemetry::ForensicEvent evAfter = { telemetry::ForensicTrapType::FOCUS_GAINED, GetCurrentThreadId(), timing::NowUs(), 0,
+            (uint32_t)(s_state.phys[0] | (s_state.phys[1] << 1) | (s_state.phys[2] << 2) | (s_state.phys[3] << 3)),
+            (uint32_t)(s_state.logical[0] | (s_state.logical[1] << 1) | (s_state.logical[2] << 2) | (s_state.logical[3] << 3)),
+            true };
+        telemetry::g_forensicBuffer.Push(evAfter);
     }
-    batch.flush();
+    FlushAndCommitLogicalState(batch);
     NotifyUI();
 }
 
 void ReconcileInternal(bool suspending, InjectionBatch& batch) {
     if (suspending) {
-        s_state.lastCounterMs = s_state.lastSpaceTimeMs = 0;
-        s_state.clickHistoryCount = s_state.clickHistoryHead = 0;
+
         s_state.axisState[0] = s_state.axisState[1] = AxisState::None;
     }
     for (int i = 0; i < 4; ++i) {

@@ -89,7 +89,6 @@ constexpr int ki(Key k) { return static_cast<int>(k); }
 constexpr int ai(Axis a) { return static_cast<int>(a); }
 
 // ── Custom message IDs ──
-constexpr UINT WM_TIMER_EXPIRED   = WM_APP + 1;
 constexpr UINT WM_TOGGLE_SUSPEND  = WM_APP + 2;
 constexpr UINT WM_BHOP_TOGGLE     = WM_APP + 3;
 constexpr UINT WM_BHOP_CYCLE_MODE = WM_APP + 4;
@@ -99,3 +98,7 @@ constexpr UINT WM_UI_REFRESH      = WM_APP + 7;
 constexpr UINT WM_STATE_DIRTY     = WM_APP + 8;
 constexpr UINT WM_TARGET_REFRESH_REQUEST = WM_APP + 9;
 constexpr UINT WM_EMERGENCY_UNHOOK = WM_APP + 10;
+constexpr UINT WM_ANALYSIS_ETW_START_FAILED = WM_APP + 11;
+constexpr UINT WM_ROUTED_INPUT_READY = WM_APP + 12;
+constexpr UINT WM_TIMER_EXPIRED = WM_APP + 13;
+constexpr UINT WM_BHOP_INJECTION_READY = WM_APP + 14;

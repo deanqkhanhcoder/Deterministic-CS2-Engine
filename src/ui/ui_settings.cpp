@@ -196,10 +196,7 @@ void Paint(HDC hdc, RECT rc) {
         layout::DrawRow(hdc, px, py, pw, rowH, L"Max Scale", buf, theme::FG_VALUE); py += rowH;
         swprintf(buf, 64, L"%.2f", cfg.crouchMult);
         layout::DrawRow(hdc, px, py, pw, rowH, L"Crouch Multiplier", buf, theme::FG_VALUE); py += rowH;
-        swprintf(buf, 64, L"%d ms", cfg.tapDelayMs);
-        layout::DrawRow(hdc, px, py, pw, rowH, L"Tap Delay", buf, theme::FG_VALUE); py += rowH;
-        swprintf(buf, 64, L"%d ms", cfg.sprayDelayMs);
-        layout::DrawRow(hdc, px, py, pw, rowH, L"Spray Delay", buf, theme::FG_VALUE); py += rowH;
+
         swprintf(buf, 64, L"%d ms", cfg.minStopMs);
         layout::DrawRow(hdc, px, py, pw, rowH, L"Min Stop", buf, theme::FG_VALUE); py += rowH;
         swprintf(buf, 64, L"%d ms", cfg.walkMemoryMs);
@@ -328,8 +325,11 @@ void OnCommand(HWND hwnd, WPARAM wp) {
             break;
         }
         case IDB_SAVE: {
-            config_io::Save(rcfg::GetMutable());
-            DLOG_INFO(Config, "Config saved to %ls", reinterpret_cast<int64_t>(config_io::GetConfigPath()));
+            if (config_io::Save(rcfg::GetMutable())) {
+                DLOG_INFO(Config, "Config saved to %ls", config_io::GetConfigPath());
+            } else {
+                DLOG_ERR(Config, "Atomic config save failed for %ls", config_io::GetConfigPath());
+            }
             break;
         }
         case IDB_RESET: {

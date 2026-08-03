@@ -16,7 +16,4 @@ bool Save(const RuntimeConfig& cfg);
 // Get path to config file
 const wchar_t* GetConfigPath();
 
-// Set the global persistence barrier to block any further disk writes
-void SetShutdownBarrier();
-
 } // namespace config_io

@@ -2,7 +2,7 @@
 #include "runtime_config.h"
 #include <iostream>
 
-using namespace physics;
+using namespace movement;
 
 int main() {
     rcfg::Init();

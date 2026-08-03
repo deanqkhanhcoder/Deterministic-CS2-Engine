@@ -1,7 +1,7 @@
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  Counter-Strafe v25.3 C++ — State Engine Implementation             ║
-// ║  Redesigned for Always-Track Physical Layer & Focus Reconciliation  ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+// â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+// â•‘  Counter-Strafe v25.3 C++ â€” State Engine Implementation             â•‘
+// â•‘  Redesigned for Always-Track Physical Layer & Focus Reconciliation  â•‘
+// â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 #include "state_engine.h"
 #include "engine_internal.h"
@@ -30,8 +30,7 @@ namespace engine {
 static HWND  s_hwnd = nullptr;
 static int64_t s_initTimeMs = 0;
 static std::atomic<bool> s_stateDirty{false};
-static std::atomic<bool> s_watchdogRunning{false};
-static std::thread s_watchdogThread;
+
 
 // --- Lock-Free Publication ---
 struct EngineStatePublication {
@@ -40,15 +39,42 @@ struct EngineStatePublication {
     bool phys[4];
     bool logical[4];
     bool bundleActive;
-    int64_t lastCounterMs;
+
 };
 constexpr size_t PUB_WORDS = (sizeof(EngineStatePublication) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-alignas(64) static std::atomic<uint64_t> s_pubBuffer[PUB_WORDS];
-alignas(64) static std::atomic<uint32_t> s_pubSeq{0};
+struct alignas(64) PublishedState {
+    std::atomic<uint32_t> seq{0};
+    std::atomic<uint64_t> buffer[PUB_WORDS];
+};
+static PublishedState s_pubState;
+
+static void ReadPublishedEngineState(EngineStatePublication& pub) {
+    uint64_t buffer[PUB_WORDS];
+    uint32_t seq0, seq1;
+    int spinCount = 0;
+    while (true) {
+        seq0 = s_pubState.seq.load(std::memory_order_acquire);
+        if (seq0 & 1) {
+            if (spinCount < 64) _mm_pause();
+            else std::this_thread::yield();
+            spinCount++;
+            continue;
+        }
+        for (size_t i = 0; i < PUB_WORDS; ++i) {
+            buffer[i] = s_pubState.buffer[i].load(std::memory_order_relaxed);
+        }
+        std::atomic_thread_fence(std::memory_order_acq_rel);
+        seq1 = s_pubState.seq.load(std::memory_order_relaxed);
+        if (seq0 == seq1) break;
+        spinCount++;
+    }
+    std::memcpy(&pub, buffer, sizeof(pub));
+}
 
 
 State s_state;
 std::mutex s_stateMutex;
+std::mutex s_operationMutex;
 std::atomic<bool> s_suspendedAtomic{false};
 bool s_hookInstalled = false;
 
@@ -61,36 +87,58 @@ void PublishEngineState() {
         pub.phys[i] = s_state.phys[i];
         pub.logical[i] = s_state.logical[i];
         pub.bundleActive = false;
-        
-        // Phase 3: Physical / Logical Consistency Audit
-        if (s_state.phys[i] && !s_state.logical[i]) {
-            // A key is physically held down, but logically released.
-            // This is ONLY legal if it's currently suspended (yielding to a counter-strafe)
-            // or globally suspended.
-            bool isCounterStrafing = (s_state.autoFire.injectedCounterMask & (1 << i));
-            bool isSuspendedMovement = (s_state.autoFire.suspendedMovementMask & (1 << i));
-            
-            if (!s_state.suspended && !isCounterStrafing && !isSuspendedMovement) {
-                DLOG_ERR(Runtime, "ILLEGAL_STATE_TRANSITION key=%d phys=1 logical=0", i);
+
+#if MARCO_ENABLE_FORENSIC
+        if (s_state.phys[i] != s_state.logical[i]) {
+            telemetry::ForensicEvent ev;
+            ev.type = telemetry::ForensicTrapType::LOGICAL_PHYSICAL_DIVERGENCE;
+            ev.threadId = GetCurrentThreadId();
+            ev.timestampUs = timing::NowUs();
+            ev.reasonCode = i; // key index
+            ev.extraData1 = s_state.phys[i];
+            ev.extraData2 = s_state.logical[i];
+            ev.focus = s_state.spacePhys; // reusing spacePhys as dummy since we don't have focus here easily, or just targetActive
+            telemetry::g_forensicBuffer.Push(ev);
+        }
+#endif
+    }
+
+#if MARCO_ENABLE_FORENSIC
+    static int64_t conflictStartUs[2] = {0, 0};
+    for (int i = 0; i < 2; ++i) {
+        if (s_state.axisState[i] == AxisState::Conflict) {
+            if (conflictStartUs[i] == 0) conflictStartUs[i] = timing::NowUs();
+            else if (timing::NowUs() - conflictStartUs[i] > 500000) { // 500 ms stall
+                telemetry::ForensicEvent ev;
+                ev.type = telemetry::ForensicTrapType::COUNTERSTRAFE_CONFLICT;
+                ev.threadId = GetCurrentThreadId();
+                ev.timestampUs = timing::NowUs();
+                ev.reasonCode = i; // axis
+                ev.extraData1 = (s_state.phys[i*2] | (s_state.phys[i*2+1] << 1));
+                ev.extraData2 = (s_state.logical[i*2] | (s_state.logical[i*2+1] << 1));
+                ev.focus = true;
+                telemetry::g_forensicBuffer.Push(ev);
+                conflictStartUs[i] = timing::NowUs(); // reset to avoid spam
             }
+        } else {
+            conflictStartUs[i] = 0;
         }
     }
-    pub.lastCounterMs = s_state.lastCounterMs;
+#endif
 
-    LOG_FIRE_TRACE("PUBLISH_STATE", s_state.autoFire.fireGenerationId);
 
-    uint32_t seq = s_pubSeq.load(std::memory_order_relaxed);
-    s_pubSeq.store(seq + 1, std::memory_order_release);
+    uint32_t seq = s_pubState.seq.load(std::memory_order_relaxed);
+    s_pubState.seq.store(seq + 1, std::memory_order_release);
     std::atomic_thread_fence(std::memory_order_release);
 
     uint64_t buffer[PUB_WORDS] = {0};
     std::memcpy(buffer, &pub, sizeof(pub));
     for (size_t i = 0; i < PUB_WORDS; ++i) {
-        s_pubBuffer[i].store(buffer[i], std::memory_order_relaxed);
+        s_pubState.buffer[i].store(buffer[i], std::memory_order_relaxed);
     }
 
     std::atomic_thread_fence(std::memory_order_release);
-    s_pubSeq.store(seq + 2, std::memory_order_release);
+    s_pubState.seq.store(seq + 2, std::memory_order_release);
 }
 
 std::atomic<int64_t> dbgLastHookUs{0};
@@ -133,181 +181,18 @@ void ClearStateDirty() {
     s_stateDirty.store(false, std::memory_order_relaxed);
 }
 
-// ── Forward declarations ──
-void RunWatchdog() {
-    int64_t nowMs = timing::NowMs();
-    (void)nowMs;
-    InjectionBatch batch;
-    {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        // Watchdog relies on standard Reconcile logic if needed
-        PublishEngineState();
-    }
-    batch.flush();
-}
 
-// ── SUSPEND / RESUME / FOCUS ──
-void StartWatchdog() {
-    s_watchdogRunning.store(true, std::memory_order_relaxed);
-    int64_t now = timing::NowMs();
-    telemetry::g_heartbeatTiming.store(now, std::memory_order_relaxed);
-    telemetry::g_heartbeatHook.store(now, std::memory_order_relaxed);
-    telemetry::g_heartbeatScanner.store(now, std::memory_order_relaxed);
-    telemetry::g_heartbeatTelemetry.store(now, std::memory_order_relaxed);
-    s_watchdogThread = std::thread([]() {
-        topology::PinBackgroundThread();
-        
-        while (s_watchdogRunning.load(std::memory_order_relaxed)) {
-            Sleep(100);
-            
-            telemetry::g_heartbeatTelemetry.store(timing::NowMs(), std::memory_order_relaxed);
-            
-            int64_t now = timing::NowMs();
-            
-            bool timingStalled = false;
-            if (!telemetry::g_blockedTiming.load(std::memory_order_relaxed)) {
-                int64_t diff = now - telemetry::g_heartbeatTiming.load(std::memory_order_relaxed);
-                if (diff > 1000) timingStalled = true;
-            }
-            
-            bool hookStalled = false;
-            if (!telemetry::g_blockedHook.load(std::memory_order_relaxed)) {
-                int64_t diff = now - telemetry::g_heartbeatHook.load(std::memory_order_relaxed);
-                if (diff > 1000) hookStalled = true;
-            }
-            
-            bool scannerStalled = false;
-            if (!telemetry::g_blockedScanner.load(std::memory_order_relaxed)) {
-                int64_t diff = now - telemetry::g_heartbeatScanner.load(std::memory_order_relaxed);
-                if (diff > 5000) scannerStalled = true;
-            }
-            
-            bool corruption = false;
-            static int corruptionCounter[4] = {0};
-            {
-                std::lock_guard<std::mutex> lock(s_stateMutex);
-                for (int i = 0; i < 4; i++) {
-                    bool logicalVal = s_state.logical[i];
-                    bool physVal = s_state.phys[i];
-                    // In offline playback, we don't have timers running.
-                    if (logicalVal && !physVal) {
-                        corruptionCounter[i]++;
-                        if (corruptionCounter[i] >= 10) {
-                            corruption = true;
-                        }
-                    } else {
-                        corruptionCounter[i] = 0;
-                    }
-                }
-            }
-            
-        uint32_t triggers = 0;
-            if (timingStalled) triggers |= 1;
-            if (hookStalled)   triggers |= 2;
-            if (scannerStalled) triggers |= 4;
-            if (corruption)    triggers |= 16;
-            
-            telemetry::g_failSafeTriggers.store(triggers, std::memory_order_relaxed);
-            
-            if (triggers != 0) {
-                // Exchange to only trigger emergency flush on state transition, mitigating loop storm
-                uint32_t prevState = telemetry::g_watchdogState.exchange(2, std::memory_order_relaxed);
-                if (prevState != 2) {
-                    TriggerEmergencyFlush();
-                }
-            } else {
-                telemetry::g_watchdogState.store(0, std::memory_order_relaxed);
-            }
-        }
-    });
-}
-
-void StopWatchdog() {
-    s_watchdogRunning.store(false, std::memory_order_relaxed);
-    if (s_watchdogThread.joinable()) {
-        s_watchdogThread.join();
-    }
-}
-
-void TriggerEmergencyFlush() {
-    static std::atomic<bool> s_inFlush{false};
-    if (s_inFlush.exchange(true)) return;
-    
-    InjectionBatch batch;
-    {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        for (int i = 0; i < 4; i++) {
-            Key k = static_cast<Key>(i);
-            batch.push(k, false);
-            s_state.logical[i] = false;
-            timing::CancelTimer(k);
-        s_state.expectedTimerId[ki(k)] = 0;
-        }
-        PublishEngineState();
-    }
-    batch.flush();
-    INPUT inpSpace = {};
-    inpSpace.type = INPUT_KEYBOARD;
-    inpSpace.ki.wVk = VK_SPACE;
-    inpSpace.ki.wScan = 0x39;
-    inpSpace.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-    SendInput(1, &inpSpace, sizeof(INPUT));
-    bhop::OnSpaceUp();
-    
-    // Defer Uninstall to main thread to avoid UnhookWindowsHookEx deadlock!
-    if (s_hwnd) {
-        PostMessage(s_hwnd, WM_EMERGENCY_UNHOOK, 0, 0);
-    }
-    
-    {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        s_state.suspended = true;
-        s_suspendedAtomic.store(true, std::memory_order_release);
-        PublishEngineState();
-    }
-    
-    telemetry::g_recoveryCount.fetch_add(1, std::memory_order_relaxed);
-    
-    s_inFlush.store(false);
-}
 
 bool IsTimingWorkloadActive() {
     if (bhop::GetState() != bhop::State::Idle) {
         return true;
     }
-    {
-        std::lock_guard<std::mutex> lock(s_stateMutex);
-        if (timing::AreTimersActive()) return true;
-    }
-    if (timing::AreTimersActive()) {
-        return true;
-    }
-    return false;
+    return timing::AreTimersActive();
 }
 
 void TakeSnapshot(RuntimeSnapshot& out) {
     EngineStatePublication pub;
-    uint64_t buffer[PUB_WORDS];
-    uint32_t seq0, seq1;
-    int spin_count = 0;
-    while (true) {
-        seq0 = s_pubSeq.load(std::memory_order_acquire);
-        if (seq0 & 1) {
-            if (spin_count < 64) _mm_pause();
-            else if (spin_count < 1024) std::this_thread::yield();
-            else std::this_thread::sleep_for(std::chrono::microseconds(10));
-            spin_count++;
-            continue;
-        }
-        for (size_t i = 0; i < PUB_WORDS; ++i) {
-            buffer[i] = s_pubBuffer[i].load(std::memory_order_relaxed);
-        }
-        std::atomic_thread_fence(std::memory_order_acq_rel);
-        seq1 = s_pubSeq.load(std::memory_order_relaxed);
-        if (seq0 == seq1) break;
-        spin_count++;
-    }
-    std::memcpy(&pub, buffer, sizeof(pub));
+    ReadPublishedEngineState(pub);
 
     out.suspended = pub.suspended;
     for (int i = 0; i < 2; i++) out.axisState[i] = pub.axisState[i];
@@ -316,7 +201,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
         out.logical[i] = pub.logical[i];
         out.bundleActive = pub.bundleActive;
     }
-    out.lastCounterMs = pub.lastCounterMs;
+
 
     out.bhopEnabled = rcfg::Get().bhopEnabled;
     out.bhopMode = bhop::GetMode();
@@ -331,7 +216,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     // Movement Telemetry
     const RuntimeConfig& cfg = rcfg::Get();
-    out.subTickCompressionActive = (cfg.brakeProfiles[cfg.activeBrakeProfileIndex].overlap_duration_us == 0);
+
     out.overlapAccuracyUs = 0; // Filled later from timerJitterUs
     switch(cfg.activeBrakeProfileIndex) {
         case 1: wcscpy_s(out.activeBrakeProfileName, L"RIFLE"); break;
@@ -370,16 +255,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     // Determine state machine state
     RuntimeState rState = RuntimeState::Detached;
-#if MARCO_ENABLE_WATCHDOG
-    uint32_t fsTriggers = telemetry::g_failSafeTriggers.load(std::memory_order_relaxed);
-    uint32_t wdState = telemetry::g_watchdogState.load(std::memory_order_relaxed);
-    if (fsTriggers != 0 || wdState == 2) {
-        rState = RuntimeState::FailSafe;
-    } else if (timingActive) {
-#else
     if (timingActive) {
-#endif
-        rState = RuntimeState::ActiveTiming;
         rState = RuntimeState::ActiveTiming;
     } else if (out.runningGamesMask != 0 && out.hookInstalled) {
         rState = RuntimeState::Attached;
@@ -395,7 +271,11 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.smtCollision = (tGroup != 0xFFFFFFFF && hGroup != 0xFFFFFFFF) && topology::AreSmtSiblings(tGroup, tCore, hGroup, hCore);
     out.affinityMode = telemetry::g_affinityMode.load(std::memory_order_relaxed);
 
-#if MARCO_ENABLE_TELEMETRY
+    out.schedulerSpikeCount = telemetry::g_schedulerSpikes.load(std::memory_order_relaxed);
+    out.coreMigrationCount = telemetry::g_coreMigrations.load(std::memory_order_relaxed);
+    out.timerOversleepPeakUs = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
+    out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
+
     // Persistent static caches for timing telemetry
     static int64_t cachedTimerJitterUs = 0;
     static int64_t cachedWakeOversleepUs = 0;
@@ -437,39 +317,15 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     telemetry::g_stateMutation.GetStats(stateMutationP50, stateMutationP99, stateMutationAvg);
     out.stateMutationLatencyUs = stateMutationP50;
 
-    out.schedulerSpikeCount = telemetry::g_schedulerSpikes.load(std::memory_order_relaxed);
-    out.coreMigrationCount = telemetry::g_coreMigrations.load(std::memory_order_relaxed);
-    out.timerOversleepPeakUs = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
-    out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
-
     // Maintain rolling timeline in TakeSnapshot
     if (timingActive) {
         int64_t jitterAvgTenths = telemetry::g_timerJitter.GetAverageTenths();
         int64_t oversleepAvgTenths = telemetry::g_oversleep.GetAverageTenths();
 
         static uint32_t lastConsumedOversleepIdx = 0;
-        uint32_t currOversleepIdx = telemetry::g_oversleep.index.load(std::memory_order_relaxed);
-        bool spikeInWindow = false;
-
-        static bool firstSampleCheck = true;
-        if (firstSampleCheck) {
-            lastConsumedOversleepIdx = currOversleepIdx;
-            firstSampleCheck = false;
-        }
-
-        if (currOversleepIdx != lastConsumedOversleepIdx) {
-            uint32_t start = lastConsumedOversleepIdx;
-            uint32_t end = currOversleepIdx;
-            lastConsumedOversleepIdx = currOversleepIdx;
-
-            for (uint32_t idx = start; idx < end; idx++) {
-                int64_t val = telemetry::g_oversleep.samples[idx % telemetry::MetricBuffer::SIZE];
-                if (val > 50) { // >50us late is a scheduler spike
-                    spikeInWindow = true;
-                    break;
-                }
-            }
-        }
+        static bool oversleepCursorInitialized = false;
+        const bool spikeInWindow = telemetry::g_oversleep.AnySince(
+            lastConsumedOversleepIdx, oversleepCursorInitialized, 50);
 
         cachedTimelineJitter[cachedTimelineIndex] = jitterAvgTenths;
         cachedTimelineOversleep[cachedTimelineIndex] = oversleepAvgTenths;
@@ -487,10 +343,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     // Histograms (Only iterate over the valid active samples in each ring buffer)
     memset(out.histHook, 0, sizeof(out.histHook));
-    uint32_t hookIdx = telemetry::g_hookLatency.index.load(std::memory_order_relaxed);
-    int hookLimit = hookIdx < telemetry::MetricBuffer::SIZE ? (int)hookIdx : telemetry::MetricBuffer::SIZE;
+    int64_t hookSamples[telemetry::MetricBuffer::SIZE]{};
+    const int hookLimit = telemetry::g_hookLatency.CopySamples(hookSamples);
     for (int i = 0; i < hookLimit; i++) {
-        int64_t val = telemetry::g_hookLatency.samples[i];
+        int64_t val = hookSamples[i];
         if (val < 5) out.histHook[0]++;
         else if (val < 10) out.histHook[1]++;
         else if (val < 20) out.histHook[2]++;
@@ -501,10 +357,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     if (timingActive) {
         memset(cachedHistJitter, 0, sizeof(cachedHistJitter));
-        uint32_t jitterIdx = telemetry::g_timerJitter.index.load(std::memory_order_relaxed);
-        int jitterLimit = jitterIdx < telemetry::MetricBuffer::SIZE ? (int)jitterIdx : telemetry::MetricBuffer::SIZE;
+        int64_t jitterSamples[telemetry::MetricBuffer::SIZE]{};
+        const int jitterLimit = telemetry::g_timerJitter.CopySamples(jitterSamples);
         for (int i = 0; i < jitterLimit; i++) {
-            int64_t val = telemetry::g_timerJitter.samples[i];
+            int64_t val = jitterSamples[i];
             if (val < 20) cachedHistJitter[0]++;
             else if (val < 50) cachedHistJitter[1]++;
             else if (val < 100) cachedHistJitter[2]++;
@@ -514,10 +370,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
         }
 
         memset(cachedHistOversleep, 0, sizeof(cachedHistOversleep));
-        uint32_t oversleepIdx = telemetry::g_oversleep.index.load(std::memory_order_relaxed);
-        int oversleepLimit = oversleepIdx < telemetry::MetricBuffer::SIZE ? (int)oversleepIdx : telemetry::MetricBuffer::SIZE;
+        int64_t oversleepSamples[telemetry::MetricBuffer::SIZE]{};
+        const int oversleepLimit = telemetry::g_oversleep.CopySamples(oversleepSamples);
         for (int i = 0; i < oversleepLimit; i++) {
-            int64_t val = telemetry::g_oversleep.samples[i];
+            int64_t val = oversleepSamples[i];
             if (val < 50) cachedHistOversleep[0]++;
             else if (val < 100) cachedHistOversleep[1]++;
             else if (val < 250) cachedHistOversleep[2]++;
@@ -529,77 +385,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
     memcpy(out.histJitter, cachedHistJitter, sizeof(out.histJitter));
     memcpy(out.histOversleep, cachedHistOversleep, sizeof(out.histOversleep));
-#endif
 
-    // Thread Health and Watchdog snapshots
-#if MARCO_ENABLE_HEARTBEATS
-    out.threadHealthTiming = (telemetry::g_blockedTiming.load(std::memory_order_relaxed) ||
-                              (nowMs - telemetry::g_heartbeatTiming.load(std::memory_order_relaxed) < 1000));
-    out.threadHealthHook = (telemetry::g_blockedHook.load(std::memory_order_relaxed) ||
-                            (nowMs - telemetry::g_heartbeatHook.load(std::memory_order_relaxed) < 1000));
-    out.threadHealthScanner = (telemetry::g_blockedScanner.load(std::memory_order_relaxed) ||
-                               (nowMs - telemetry::g_heartbeatScanner.load(std::memory_order_relaxed) < 5000));
-    out.threadHealthTelemetry = (telemetry::g_blockedTelemetry.load(std::memory_order_relaxed) ||
-                                 (nowMs - telemetry::g_heartbeatTelemetry.load(std::memory_order_relaxed) < 2000));
-#if MARCO_ENABLE_WATCHDOG
-    out.watchdogState = telemetry::g_watchdogState.load(std::memory_order_relaxed);
-    out.failSafeTriggers = telemetry::g_failSafeTriggers.load(std::memory_order_relaxed);
-    out.recoveryCount = telemetry::g_recoveryCount.load(std::memory_order_relaxed);
-#endif
-#endif
+
 }
 
 void SetHookInstalled(bool v) { s_hookInstalled = v; NotifyUI(); }
 
-void LogFireTrace(const char* phase, uint64_t gen) {
-#if MARCO_DEBUG_FORENSIC
-    int64_t nowUs = timing::NowUs();
-    auto& stats = s_state.autoFire.stats;
-    int64_t delta_m1 = (stats.m1_down_us > 0) ? (nowUs - stats.m1_down_us) : 0;
-    int64_t delta_flush = (stats.batch_flush_end_us > 0) ? (nowUs - stats.batch_flush_end_us) : 0;
-    int64_t delta_schedule = (stats.shot_scheduled_us > 0) ? (nowUs - stats.shot_scheduled_us) : 0;
-    int64_t delta_deadline = (stats.expected_deadline_us > 0) ? (nowUs - stats.expected_deadline_us) : 0;
-
-    char buf[256];
-    snprintf(buf, sizeof(buf), "[FIRE_TRACE] t=%lldus tid=%lu gen=%llu phase=%s d_m1=%lld d_flush=%lld d_sched=%lld d_dead=%lld",
-        nowUs, GetCurrentThreadId(), gen, phase,
-        delta_m1, delta_flush, delta_schedule, delta_deadline);
-    dlog::Write(dlog::Subsystem::FireTrace, dlog::Level::Trace, __FILE__, __LINE__, "%s", (int64_t)buf);
-#endif
-}
-
 } // namespace engine
-
-namespace engine {
-void ValidateAxisState() {
-    // 1. Logical Array consistency
-    bool w = s_state.logical[ki(Key::W)];
-    bool s = s_state.logical[ki(Key::S)];
-    bool a = s_state.logical[ki(Key::A)];
-    bool d = s_state.logical[ki(Key::D)];
-    
-    auto checkAxis = [&](bool pos, bool neg, AxisState state, const char* axName) {
-        if (pos && neg && state != AxisState::Conflict) {
-            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical pos+neg but state is %d", axName, (int)state);
-        }
-        if (pos && !neg && state != AxisState::Positive) {
-            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical pos only but state is %d", axName, (int)state);
-        }
-        if (!pos && neg && state != AxisState::Negative) {
-            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical neg only but state is %d", axName, (int)state);
-        }
-        if (!pos && !neg && state != AxisState::None) {
-            DLOG_ERR(Runtime, "CORRUPTION: %s axis logical none but state is %d", axName, (int)state);
-        }
-    };
-    checkAxis(w, s, s_state.axisState[1], "Y");
-    checkAxis(d, a, s_state.axisState[0], "X");
-
-    // 2. autoFire mask consistency
-    if (s_state.autoFire.state == FireState::Idle) {
-        if (s_state.autoFire.injectedCounterMask != 0) {
-            DLOG_ERR(Runtime, "CORRUPTION: injectedCounterMask != 0 while Idle");
-        }
-    }
-}
-}
