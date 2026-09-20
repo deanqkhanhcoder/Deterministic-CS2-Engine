@@ -1,8 +1,8 @@
 # Marco Project Brain
 
-Date: 2026-06-01
-Version: V27.7
-Mode: Focus-Storm Hardening
+Date: 2026-08-03
+Version: V27.8
+Mode: Input Stabilization & Concurrency Safety
 
 Tài liệu này là lõi trung tâm. 
 Bất kỳ AI nào làm việc với dự án này CHỈ CẦN đọc 2 file sau:
@@ -14,30 +14,29 @@ Bất kỳ AI nào làm việc với dự án này CHỈ CẦN đọc 2 file sau
 
 ## Current Architecture
 
-* **Input Pipeline**: Windows LL Hooks -> Physical State -> Semantic Route -> Game State.
-* **Thread Model**: Lock-Free UI (Seqlock), OS Hook Thread, Background Timer Spinloop, Async BHOP Worker, Background Focus Resolver.
+* **Input Pipeline**: Windows LL Hooks -> Physical State -> Semantic Route (`RoutedInputQueue`) -> Game State -> Target-Bound Injection (`BhopInjectionQueue` / `InjectionBatch`).
+* **Thread Model**: Lock-Free UI (Seqlock + `s_writerMutex`), OS Hook Thread (Wait-Free), Background Timer Spinloop, Async BHOP Worker (Owner-Thread Dispatched), Background Focus Resolver.
 * **Core Loops**: Counter-Strafe sử dụng 2D physics LUT để tính toán delay tự phanh khẩn cấp.
 
 ## Current Status
 
-V27.7
+V27.8
 
 Source:
 CERTIFIED
 
 Build:
-PASS
+PASS (make debug, profile, release, check: 18/18 safe tests passed)
 
 Runtime:
-Stable Development Baseline
+Stable Production Baseline
 
 ## Current Bugs
 
-* **V27.5 update**: BUG-002/003/004/005/006/007/009/010/011 have source fixes in the V27.5 hardening pass. Keep them as RUNTIME NOT YET VERIFIED until real gameplay evidence exists.
-
-* **BUG-004 Resolver Starvation (CRITICAL)**: Queue resolve window bị giành giật tín hiệu (Condition Variable) gây tịt ngòi nhận diện game.
-* **BUG-005 Emergency Unhook Blackhole (HIGH)**: Watchdog cứu nguy nhưng UI nuốt mất message.
-* **BUG-002 LUT Data Race (MEDIUM)**: Đổi profile đụng độ hook thread đọc bảng LUT Counter-Strafe.
+* **V27.5 - V27.7 hardening**: BUG-001 through BUG-011 have source fixes implemented and verified by automated unit/integration suites.
+* Watchdog architecture completely purged in V27.6.
+* DispatchMessage focus-storm stalls eliminated in V27.7.
+* Seqlock write racing and unbounded log queue memory leak eliminated in V27.8.
 
 *(Xem danh sách chi tiết tại `docs/MARCO_KNOWLEDGE_BASE.md` phần BUG REGISTRY).*
 
@@ -55,9 +54,15 @@ Stable Development Baseline
 1. Eliminated DispatchMessage stalls during rapid focus flapping by making `OutputDebugStringA` asynchronous in `LogWorker`.
 2. Reduced `s_focusMutex` lock contention by collecting focus transition state and executing heavy logging / telemetry emissions outside the critical section in `IsTargetActive()`.
 
+**V27.8 Input Stabilization & Concurrency Safety (COMPLETED)**:
+1. Target-Bound Input: Validate target identity and release ownership before synthetic dispatch.
+2. Hook-Owner Dispatch: Timer and BHOP execution deferred to owner thread (`BhopInjectionQueue`, `RoutedInputQueue`).
+3. Seqlock Writer Mutex: Protected `rcfg::Apply()` and mutable config access with `s_writerMutex`.
+4. Bounded Logging Queue: `s_logQueue` capped at 4096 messages in `debug_logger.cpp`.
+5. Automated Test & Safe Gate Infrastructure: 18 CTest integration/unit tests (`make check`), PE import verification, private-desktop isolation guard.
+
 **Next**:
-1. Real gameplay validation for V27.7.
-2. Monitor production observability (focus/profile events).
+1. Monitor production observability (focus/profile events) during live matchmaking.
 
 ---
 

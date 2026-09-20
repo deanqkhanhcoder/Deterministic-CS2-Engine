@@ -2,12 +2,12 @@
 
 ## Supported Versions
 
-Currently, only the V26 branch (`main`) is supported with security updates.
+Currently, only the V27 branch (`main`) is supported with security updates.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| >= 26.0 | :white_check_mark: |
-| < 26.0  | :x:                |
+| >= 27.0 | :white_check_mark: |
+| < 27.0  | :x:                |
 
 ## Reporting a Vulnerability
 

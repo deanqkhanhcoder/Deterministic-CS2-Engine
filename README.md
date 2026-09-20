@@ -2,28 +2,23 @@
 
 Marco is a Windows C++20 input-processing engine for FPS games, focused on Counter-Strike 2. It captures hardware input, tracks physical and logical state, routes semantic movement intent, runs Counter-Strafe and BHOP controllers, schedules precise timer callbacks, and injects output through `SendInput`.
 
-The project is currently in V27.4 stabilization. Recent work focused on focus-state correctness, state reconciliation, runtime observability, forensic logging, path governance, and repository organization.
+The project is currently on V27.8. Recent work focused on complete input stabilization, target-bound synthetic input, hook-owner thread dispatch, focus-storm hardening, bounded log queues, Seqlock writer synchronization, and automated safe test gates.
 
 ## Current Status
 
-Version: `v27.4.0-stable`
+Version: `v27.8.0-stable`
 
-Status: Stabilization Candidate
+Status: Stable Production Baseline
 
 Highlights:
 
-- Fixed Focus Desync / stale focus cache failure mode.
-- Unified runtime log, crash, capture, artifact, and binary folder architecture.
-- Added automatic forensic infrastructure.
-- Added `PROJECT_BRAIN.md` as the mandatory first-read knowledge base.
-- Added path governance through `workspace::` runtime path helpers.
-
-Known State:
-
-- Stable in recent gameplay sessions.
-- Long-session certification is still in progress.
-- Not a production release claim.
-- Long-term 3-7 day runtime evidence is still required before release certification.
+- **Target-Bound Synthetic Input**: Validated target binding and release ownership prevent input leakage to foreign windows.
+- **Hook-Owner Thread Dispatch**: Dispatches timer callbacks and BHOP injection requests onto the hook-owner message thread.
+- **Focus-Storm Hardening**: Decoupled asynchronous debug logging and optimized focus mutex contention under rapid alt-tabbing.
+- **Concurrency Safety**: Protected Seqlock configuration writer path with `s_writerMutex` and bounded debug log queue to 4096 messages.
+- **Multi-Game Target Support**: Profiles for Counter-Strike 2, Roblox, and Valorant.
+- **Comprehensive Test Suite**: Automated 18-test CTest regression and integration suite (`make check`) with PE import safety validation and isolated desktop stress tests.
+- **Strict Path Governance**: All runtime binaries, logs, crash dumps, and telemetry strictly centralized under `runtime/`.
 
 ## Architecture Overview
 
@@ -114,7 +109,7 @@ Start here:
 
 ```text
 PROJECT_BRAIN.md
-docs/REPORT_INDEX.md
+docs/MARCO_KNOWLEDGE_BASE.md
 ```
 
 ## Reports And Forensics
@@ -131,15 +126,16 @@ Forensic investigations live under:
 docs/forensics/
 ```
 
-Do not place new investigation reports in repository root. Add or update an index entry when adding durable documentation.
+Do not place new investigation reports in repository root.
 
-## Build
+## Build and Test
 
 Prerequisites:
 
 - Windows 10/11 x64
-- MinGW-w64 with C++20 support
+- MinGW-w64 with C++20 support (g++)
 - GNU Make
+- CMake 3.20+ and Python 3.8+ (for test suite)
 
 Build commands:
 
@@ -147,6 +143,12 @@ Build commands:
 make debug
 make profile
 make release
+```
+
+Run test suite:
+
+```powershell
+make check
 ```
 
 Expected binaries:

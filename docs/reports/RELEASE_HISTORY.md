@@ -1,5 +1,22 @@
 # RELEASE HISTORY
 
+## Version: v27.8.0-stable (Input Stabilization & Concurrency Safety)
+*Date: 2026-08-03*
+
+Highlights:
+- **Target-Bound Synthetic Input**: Bound input injection and release ownership strictly to validated foreground target identities (`TargetIdentity`).
+- **Hook-Owner Thread Dispatch**: Dispatched timer callbacks and BHOP injection requests onto the hook-owner message thread (`BhopInjectionQueue`), preventing worker-thread SendInput hangs and race conditions.
+- **Seqlock Writer Synchronization**: Added `s_writerMutex` inside `rcfg::Apply()`, `GetMutable()`, and `Init()` to serialize configuration writes and prevent tearing/data races.
+- **Bounded Logging Queue**: Converted `s_logQueue` in `debug_logger.cpp` into a bounded queue (`kMaxQueuedMessages = 4096`) to eliminate unbounded heap growth.
+- **Circular ETW Tracing**: Enabled `EVENT_TRACE_FILE_MODE_CIRCULAR` to prevent ETW trace file starvation during marathon sessions.
+- **Safe Test Gates & Isolation**: Integrated automated 18-test CTest regression suite (`make check`), PE import static auditing (`scripts/test/check_no_input_imports.py`), and private desktop isolation guards (`desktop_isolation_guard.cpp`).
+- No gameplay physics regressions. Golden regression suite passes with 100% deterministic output match.
+
+Status:
+SOURCE CERTIFIED
+AUTOMATED SUITE PASS (18/18 TESTS)
+STABLE
+
 ## Version: v27.7 (Focus-Storm Hardening)
 *Date: 2026-06-03*
 

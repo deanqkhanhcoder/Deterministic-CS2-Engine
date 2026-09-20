@@ -1,7 +1,7 @@
 # Build Artifacts
-build/
-build/obj/
-obj/
+/build/
+/build/obj/
+/obj/
 .agent/
 *.exe
 *.o

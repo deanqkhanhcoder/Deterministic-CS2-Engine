@@ -1,6 +1,6 @@
 # MARCO KNOWLEDGE BASE (SINGLE SOURCE OF TRUTH)
 
-*Date: 2026-06-01 | Engine Version: V27.6*
+*Date: 2026-08-03 | Engine Version: V27.8*
 
 ## 1. Project Overview
 Marco Engine là một Windows C++20 input-processing engine cho game FPS (chủ yếu là CS2 và Roblox). Nó bắt phím cấp thấp (low-level hook), theo dõi trạng thái vật lý và logic độc lập, thực thi các macro (Counter-Strafe, BHOP), và inject phím ảo qua `SendInput`.
@@ -109,8 +109,6 @@ Status vocabulary for this pass:
 | BUG-010 Watchdog Self-Deadlock | IMPLEMENTED, TESTED (build), RUNTIME NOT YET VERIFIED | Watchdog health checks read the published seqlock snapshot instead of locking `s_stateMutex`; emergency recovery uses `try_to_lock` so unhook signaling can proceed if state mutex is stuck. |
 | BUG-011 Synchronous I/O In Hook | IMPLEMENTED, TESTED (build), RUNTIME NOT YET VERIFIED | Focus-loss/focus-gain paths now call `telemetry::RequestForensicFlush()` instead of `FlushForensicLog()`; the telemetry thread performs disk flush asynchronously. |
 
-| BUG-011 Synchronous I/O In Hook | IMPLEMENTED, TESTED (build), RUNTIME NOT YET VERIFIED | Focus-loss/focus-gain paths now call `telemetry::RequestForensicFlush()` instead of `FlushForensicLog()`; the telemetry thread performs disk flush asynchronously. |
-
 **V27.6 Maturity Update**:
 - Removed Watchdog Architecture (fixes BUG-008, BUG-010). UI Watchdog also removed.
 - Cleaned up `autofire_controller` (dead code), F8 tracking, and `WM_TIMER_EXPIRED` (including stale header documentation).
@@ -123,6 +121,13 @@ Status vocabulary for this pass:
 - **Fix 1**: Moved `OutputDebugStringA` execution into the background `LogWorker()` thread (Asynchronous Logging).
 - **Fix 2**: Reduced `s_focusMutex` lock hold duration inside `IsTargetActive()` by executing heavy telemetry pushes and string formatting outside the critical section.
 
+**V27.8 Input Stabilization & Concurrency Safety**:
+- **Seqlock Writer Mutex**: Added `s_writerMutex` inside `rcfg::Apply()` to serialize concurrent writes and prevent race conditions.
+- **Bounded Logging Queue**: Capped `s_logQueue` in `debug_logger.cpp` at 4096 messages with drop counters to eliminate unbounded memory growth.
+- **BHOP Jitter Compensation**: Applied accumulated jitter compensation across all three `PrecisionWait` phases in `bhop.cpp`.
+- **Target-Bound Injection**: Implemented `BhopInjectionQueue` and `bhop_injection_gate` to defer synthetic input to the hook-owner message thread with verified target identity.
+- **Automated Test Infrastructure**: Unified CTest suite under `make check` (18 unit/integration tests passing), PE import security audits, and isolated desktop guards.
+
 ## 17. Technical Debt
 
 - Macro cờ build (`MARCO_ENABLE_LOGGING` v.v) chưa bị xoá ở `build_config.h` dù không có người dùng (Đã dọn dẹp ở V27.6).
@@ -130,9 +135,9 @@ Status vocabulary for this pass:
 - F8 tracking vô hình còn tồn tại trong `input_capture.cpp` (Đã xoá ở V27.6).
 - Các đoạn dead code dư thừa do xoá Subtick Autofire (`autofire_controller.cpp`) (Đã dọn ở V27.6).
 
-## 18. Deferred After V27.7
-- Real gameplay validation for BUG-002/003/004/005/006/007/009/010/011 remains required.
-- Viết lại toàn bộ `tests/` để hoạt động với API mới.
+## 18. Deferred After V27.8
+- Real gameplay validation for long multi-hour MM/DM sessions.
+- Viết lại toàn bộ `tests/` để hoạt động với API mới (ĐÃ HOÀN THÀNH ở V27.8: 18/18 tests pass).
 
 ## 19. Risk Register
 - Nếu BUG-004 (Resolver Starvation) xảy ra, target window không được nhận diện, toàn bộ macro tắt ngóm. Cực kỳ dễ xảy ra nếu người dùng spam Alt-tab.

@@ -1,7 +1,7 @@
 #pragma once
 
 // ╔══════════════════════════════════════════════════════════════════════╗
-// ║  Counter-Strafe v25.3 C++ — Build Configuration Definitions         ║
+// ║  Marco Engine V27 C++ — Build Configuration Definitions              ║
 // ║  SINGLE SOURCE OF TRUTH FOR MULTI-CONFIG BUILD PIPELINE             ║
 // ╚══════════════════════════════════════════════════════════════════════╝
 

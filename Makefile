@@ -1,4 +1,4 @@
-# Counter-Strafe v25.3 C++ — MinGW Makefile
+# Marco Engine V27 C++ — MinGW Makefile
 # MULTI-CONFIGURATION BUILD PIPELINE
 
 CXX      = g++

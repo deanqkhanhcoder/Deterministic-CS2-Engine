@@ -14,10 +14,11 @@ This project operates on strict mathematical determinism. Any pull request that 
 1. Fork the repo and create your branch from `main`.
 2. If you've added code that should be tested, add tests.
 3. If you've changed APIs, update the documentation.
-4. Ensure the test suite passes (`make clean && make release && python scripts/test/run_regression.py`).
+4. Ensure the test suite passes (`make clean && make release && make check`).
 5. Issue that pull request!
 
 ## 4. Concurrency Policy
 - `s_stateMutex` must be held for State logic.
+- `s_writerMutex` must be held for configuration updates (`rcfg::Apply()`).
 - `s_spinlock` must be held for Timers.
-- `SendInput` must **NEVER** be called while holding any mutex. All inputs must be queued via `InjectionBatch`.
+- `SendInput` must **NEVER** be called directly while holding locks. All inputs must be dispatched via `InjectionBatch` or deferred through `BhopInjectionQueue` to the owner thread.
