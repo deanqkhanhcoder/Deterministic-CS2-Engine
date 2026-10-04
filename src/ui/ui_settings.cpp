@@ -156,7 +156,7 @@ void Paint(HDC hdc, RECT rc) {
 
     // Pass 1: measure total content height
     int p1H = layout::PanelHeight(8 * rowH);
-    int p_evoH = layout::PanelHeight(7 * rowH);
+    int p_evoH = layout::PanelHeight(8 * rowH);
     int p2H = layout::PanelHeight(4 * rowH);
     int p3H = layout::PanelHeight(3 * rowH);
     
@@ -234,7 +234,10 @@ void Paint(HDC hdc, RECT rc) {
         layout::DrawRow(hdc, px, py, pw, rowH, L"Authority Bias", buf, theme::FG_VALUE); py += rowH;
 
         swprintf(buf, 64, L"%.2fx", prof.aggressiveness_curve);
-        layout::DrawRow(hdc, px, py, pw, rowH, L"Aggr. Curve", buf, theme::FG_VALUE);
+        layout::DrawRow(hdc, px, py, pw, rowH, L"Aggr. Curve", buf, theme::FG_VALUE); py += rowH;
+
+        swprintf(buf, 64, L"%.1f u/s", prof.accuracyThreshold);
+        layout::DrawRow(hdc, px, py, pw, rowH, L"Accuracy Thresh", buf, theme::FG_VALUE);
     }
     y += p_evoH + theme::GROUP_PAD;
 

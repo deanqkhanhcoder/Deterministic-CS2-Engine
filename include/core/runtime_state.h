@@ -67,6 +67,7 @@ struct RuntimeSnapshot {
     double    profileBrakeBias;
     double    profileAuthorityBiasMs;
     double    profileAggrCurve;
+    double    profileAccuracyThreshold;
 
     uint32_t  activeTimingCore;
     uint32_t  activeHookCore;

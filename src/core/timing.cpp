@@ -100,8 +100,8 @@ void SetNextTimerIdForTesting(uint64_t nextId) {
 
 static TimerSlot        s_slots[NUM_SLOTS];  // indexed by Key enum
 
-static std::atomic<int64_t> s_adaptiveWakeMarginUs{1200}; // start at balanced
-static std::atomic<int64_t> s_adaptiveSpinTailUs{800};
+static std::atomic<int64_t> s_adaptiveWakeMarginUs{1500};
+static std::atomic<int64_t> s_adaptiveSpinTailUs{1500};
 
 static double s_avgOversleepUs = 0.0;
 static double s_varOversleepUs = 0.0;
@@ -119,26 +119,14 @@ static void UpdateAdaptiveController(int64_t oversleepUs) {
         telemetry::g_eventBuffer.Push(5, 0, 4, (int32_t)mode); // EVENT_MODE_CHANGE = 4
     }
 #endif
-    int64_t spinTail = 100;
-    int64_t wakeMargin = 200;
-
-    if (mode == 0) { // Competitive
-        spinTail = 100;
-        wakeMargin = 200;
-    } else if (mode == 1) { // Balanced
-        spinTail = 100;
-        wakeMargin = 200;
-    } else { // Low CPU
-        spinTail = 50;
-        wakeMargin = 100;
-    }
-
+    // Spin window = how long before expiry we stop sleeping and busy-wait.
+    // A high-resolution waitable timer still wakes ~0.5-1 ms late, so the
+    // window must exceed that; widen it when measured oversleep grows.
+    int64_t spinTail = (mode >= 2) ? 1000 : 1500;
     if (s_avgOversleepUs > 100.0) {
-        wakeMargin += 100;
-        if (wakeMargin > 500) wakeMargin = 500;
-    } else if (s_avgOversleepUs < 10.0 && wakeMargin > 200) {
-        wakeMargin -= 50;
+        spinTail = std::min<int64_t>(2000, spinTail + (int64_t)s_avgOversleepUs);
     }
+    const int64_t wakeMargin = spinTail;
 
     s_adaptiveSpinTailUs.store(spinTail, std::memory_order_relaxed);
     s_adaptiveWakeMarginUs.store(wakeMargin, std::memory_order_relaxed);

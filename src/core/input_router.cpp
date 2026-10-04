@@ -1,4 +1,4 @@
-﻿#include "engine_internal.h"
+#include "engine_internal.h"
 #include "movement_reconstruction.h"
 #include "runtime_config.h"
 #include "bhop.h"
@@ -50,8 +50,17 @@ void HandleKeyDown(Key k, bool routeSemantic,
         s_state.phys[ki_k]     = true;
         s_state.downTimeUs[ki_k] = nowUs;
 
-        timing::CancelTimer(k);
-        s_state.expectedTimerId[ki(k)] = 0;
+        // A pending expectedTimerId means the macro itself is holding this key
+        // as a counter-strafe brake. The human press must NOT cancel that
+        // timer, or the brake ends whenever the human releases (47/63 ms)
+        // instead of after the simulated number of ticks. On expiry the key
+        // is only released if it is not physically held.
+        const bool macroBrakePending =
+            s_state.logical[ki_k] && s_state.expectedTimerId[ki_k] != 0;
+        if (!macroBrakePending) {
+            timing::CancelTimer(k);
+            s_state.expectedTimerId[ki(k)] = 0;
+        }
 
         // --- SEMANTIC ROUTING LAYER ---
         if (!routeSemantic) return;
@@ -81,7 +90,7 @@ void HandleKeyDown(Key k, bool routeSemantic,
 
         AxisState curState = s_state.axisState[ai(ax)];
         if (curState != AxisState::Conflict) {
-            batch.push(k, true);
+            if (!s_state.logical[ki_k]) batch.push(k, true);
             s_state.logical[ki_k] = true;
         }
         PublishEngineState();
@@ -153,8 +162,14 @@ void HandleKeyUp(Key k, bool routeSemantic,
                     s_state.mem.lastHoldUs[ai(ax)] = heldUs;
                 }
 
-                bool strafed = false;
-                if (reason == ReleaseReason::Normal && !s_state.phys[ki_opp]) {
+                // Macro-held brake on this key (see HandleKeyDown): leave it
+                // held; its timer releases it after the full simulated hold.
+                const bool macroBrakePending = s_state.logical[ki_k] &&
+                    s_state.expectedTimerId[ki_k] != 0 &&
+                    s_state.axisState[ai(ax)] != AxisState::Conflict;
+
+                bool strafed = macroBrakePending;
+                if (!macroBrakePending && reason == ReleaseReason::Normal && !s_state.phys[ki_opp]) {
                     strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch);
                 }
 

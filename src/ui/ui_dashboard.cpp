@@ -261,6 +261,10 @@ void Paint(HDC hdc, RECT rc, const RuntimeSnapshot& snap) {
             layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Aggr. Curve", valW, theme::FG_VALUE);
             py += rowH;
 
+            swprintf_s(valW, L"%.1f u/s", snap.profileAccuracyThreshold);
+            layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Accuracy Thresh", valW, theme::FG_VALUE);
+            py += rowH;
+
             layout::DrawRowCustom(hdc, rx, py, rwLabel, rwVal, rowH, L"Bhop Engine",
                                   snap.bhopEnabled ? L"ENABLED" : L"DISABLED",
                                   snap.bhopEnabled ? theme::CLR_ON : theme::CLR_OFF);

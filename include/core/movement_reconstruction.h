@@ -15,6 +15,10 @@ namespace movement {
 // taking into account the sv_maxspeed circular clamping.
 void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int signY, const RuntimeConfig& rc, double& outVx, double& outVy);
 
+// Integrates the tracked velocity (friction then accelerate per tick, with a
+// fractional last step) from t.lastUs to nowUs using the wish stored in t.
+void AdvanceVelocity(VelocityTracker& t, int64_t nowUs, const RuntimeConfig& rc);
+
 // Multi-factor intent velocity attenuation (applies tap penalty, conflict penalty, walk, etc)
 // Returns a scaling factor [0.0, 1.0] to multiply the true velocity by.
 double CalcIntentEfficiency(Key k, int64_t heldUs, const State& state, const RuntimeConfig& rc);

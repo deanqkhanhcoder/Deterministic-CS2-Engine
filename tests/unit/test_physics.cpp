@@ -44,6 +44,27 @@ int main() {
     Expect(diagonalVx == diagonalBaselineVx && diagonalVy == diagonalBaselineVy,
            "negative diagonal hold must clamp to zero tick");
 
+    // Tracked velocity: run right to full speed, then press left for 3 ticks.
+    // Velocity must be carried over (still moving right), never reset to 0.
+    VelocityTracker trk;
+    constexpr int64_t kTick = 15625;
+    int64_t t = 1000000;
+    trk.lastUs = t;
+    trk.wishX = 1;
+    t += 64 * kTick;
+    AdvanceVelocity(trk, t, rc);
+    Expect(trk.vx > 240.0 && trk.vx <= rc.physMaxSpeed + 1e-6,
+           "tracker reaches ~max speed under sustained wish");
+    trk.wishX = -1;
+    t += 3 * kTick;
+    AdvanceVelocity(trk, t, rc);
+    Expect(trk.vx > 50.0 && trk.vx < 150.0,
+           "3-tick reversal keeps carried velocity (A-D strafe case)");
+    trk.wishX = 0;
+    t += 200 * kTick;
+    AdvanceVelocity(trk, t, rc);
+    Expect(trk.vx == 0.0, "friction alone stops the tracker");
+
     const int legacyNarrow = LookupStopDur2D(250.0, 0.0, 0, false);
     const int nonFiniteLookup = LookupStopDur2D(
         std::numeric_limits<double>::quiet_NaN(),

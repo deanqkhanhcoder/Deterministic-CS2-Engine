@@ -17,6 +17,60 @@ struct MovementLutSnapshot {
 
 static std::atomic<std::shared_ptr<const MovementLutSnapshot>> s_lut;
 
+// Valve PM_Friction (CGameMovement::Friction). Runs BEFORE accelerate.
+static void PmFriction(double& vx, double& vy, const RuntimeConfig& rc, double dt) {
+    const double speed = std::sqrt(vx * vx + vy * vy);
+    if (speed < 0.1) return;
+    const double control = speed < rc.physStopSpeed ? rc.physStopSpeed : speed;
+    const double newSpeed = std::max(0.0, speed - control * rc.physFriction * dt);
+    const double scale = newSpeed / speed;
+    vx *= scale;
+    vy *= scale;
+}
+
+// Valve PM_Accelerate (CGameMovement::Accelerate). wishdir need not be unit;
+// wishspeed = sv_maxspeed. currentspeed < 0 (opposing key) gives
+// addspeed > wishspeed, so accelspeed is only capped by accel*dt*wishspeed.
+static void PmAccelerate(double& vx, double& vy, double wishX, double wishY,
+                         double wishSpeed, const RuntimeConfig& rc, double dt) {
+    const double mag = std::sqrt(wishX * wishX + wishY * wishY);
+    if (mag < 0.001) return;
+    wishX /= mag;
+    wishY /= mag;
+    const double currentSpeed = vx * wishX + vy * wishY;
+    const double addSpeed = wishSpeed - currentSpeed;
+    if (addSpeed <= 0.0) return;
+    const double accelSpeed = std::min(rc.physAccelerate * dt * wishSpeed, addSpeed);
+    vx += accelSpeed * wishX;
+    vy += accelSpeed * wishY;
+}
+
+void AdvanceVelocity(VelocityTracker& t, int64_t nowUs, const RuntimeConfig& rc) {
+    constexpr double kTickS = 1.0 / 64.0;
+    constexpr int kMaxSteps = 256; // 4 s; speed is ~0 long before that
+    if (t.lastUs < 0) {
+        t.lastUs = nowUs;
+        return;
+    }
+    if (nowUs <= t.lastUs) {
+        return;
+    }
+    double remaining = static_cast<double>(nowUs - t.lastUs) * 1e-6;
+    t.lastUs = nowUs;
+    const double wishSpeed = rc.physMaxSpeed * t.speedScale;
+    for (int i = 0; i < kMaxSteps && remaining > 1e-9; ++i) {
+        const double dt = std::min(remaining, kTickS); // sub-tick tail step
+        remaining -= dt;
+        PmFriction(t.vx, t.vy, rc, dt);
+        PmAccelerate(t.vx, t.vy, t.wishX, t.wishY, wishSpeed, rc, dt);
+        if (t.wishX == 0 && t.wishY == 0 && t.vx == 0.0 && t.vy == 0.0) break;
+    }
+    // Friction leaves < 0.1 u/s residue only as exact zero via stopspeed; snap.
+    if (t.wishX == 0 && t.wishY == 0 && std::hypot(t.vx, t.vy) < 0.1) {
+        t.vx = t.vy = 0.0;
+    }
+}
+
 static int SimulateStopDurationMs(double vx,
                            double vy,
                            int wishMode,
@@ -26,55 +80,33 @@ static int SimulateStopDurationMs(double vx,
     double curVy = std::abs(vy);
     if (curVx <= releaseVelocityWindow) return 0;
 
-    double wishX = curVx > 0.0 ? -1.0 : 0.0;
+    // Frame of reference: velocity along +X/+Y, so opposing key = -X.
+    const double wishX = -1.0;
     double wishY = 0.0;
     if (wishMode == 1) wishY = curVy > 0.0 ? 1.0 : 0.0;
     else if (wishMode == 2) wishY = curVy > 0.0 ? -1.0 : 0.0;
     else if (wishMode == 3) wishY = curVy > 0.0 ? -1.0 : 1.0;
-
-    const double wishMagnitude = std::sqrt(wishX * wishX + wishY * wishY);
-    if (wishMagnitude > 0.001) {
-        wishX /= wishMagnitude;
-        wishY /= wishMagnitude;
-    }
 
     constexpr double dt = 1.0 / 64.0;
     int ticks = 0;
     double previousVx = curVx;
     while (ticks < 100 && curVx > releaseVelocityWindow) {
         previousVx = curVx;
-        const double speed = std::sqrt(curVx * curVx + curVy * curVy);
-        const double control = speed < rc.physStopSpeed ? rc.physStopSpeed : speed;
-        const double newSpeed = std::max(0.0, speed - control * rc.physFriction * dt);
-        const double frictionScale = speed > 0.0 ? newSpeed / speed : 0.0;
-
-        double frictionVx = curVx * frictionScale;
-        double frictionVy = curVy * frictionScale;
-        const double currentSpeed = frictionVx * wishX + frictionVy * wishY;
-        const double addSpeed = rc.physMaxSpeed - currentSpeed;
-        if (addSpeed > 0.0) {
-            const double accelSpeed = std::min(
-                rc.physAccelerate * dt * rc.physMaxSpeed,
-                addSpeed);
-            frictionVx += accelSpeed * wishX;
-            frictionVy += accelSpeed * wishY;
-        }
-
-        curVx = frictionVx;
-        curVy = frictionVy;
+        PmFriction(curVx, curVy, rc, dt);
+        PmAccelerate(curVx, curVy, wishX, wishY, rc.physMaxSpeed, rc, dt);
         ++ticks;
     }
 
+    // Sub-tick crossing time, then round UP to a whole tick: the engine
+    // only integrates whole ticks of the held key.
     double exactTicks = static_cast<double>(ticks);
     if (ticks > 0 && curVx <= releaseVelocityWindow &&
         previousVx > releaseVelocityWindow && previousVx != curVx) {
-        const double fraction =
+        exactTicks = static_cast<double>(ticks - 1) +
             (previousVx - releaseVelocityWindow) / (previousVx - curVx);
-        exactTicks = static_cast<double>(ticks - 1) + fraction;
     }
 
-    const double pureMs = exactTicks * 15.625;
-    const double alignedMs = std::ceil(pureMs / 15.625) * 15.625;
+    const double alignedMs = std::ceil(exactTicks) * 15.625;
     return static_cast<int>(alignedMs + 0.5);
 }
 
@@ -92,42 +124,16 @@ void InitLUT() {
             bool x_longer = (t1 > t2);
             
             for (int i = 0; i < max_t; ++i) {
-                double speed = std::sqrt(vx*vx + vy*vy);
-                double fric_k = rc.physFriction * dt;
-                
-                // PM_Friction
-                if (speed > 0.1) {
-                    double control = (speed < rc.physStopSpeed) ? rc.physStopSpeed : speed;
-                    double drop = control * fric_k;
-                    double newspeed = speed - drop;
-                    if (newspeed < 0) newspeed = 0;
-                    double f_scale = newspeed / speed;
-                    vx *= f_scale;
-                    vy *= f_scale;
-                }
-                
-                // PM_Accelerate
+                PmFriction(vx, vy, rc, dt);
+
                 double wish_x = 0.0, wish_y = 0.0;
-                
                 if (i < (max_t - min_t)) {
                     if (x_longer) wish_x = 1.0;
                     else wish_y = 1.0;
                 } else {
                     wish_x = 1.0; wish_y = 1.0;
                 }
-                
-                double w_mag = std::sqrt(wish_x*wish_x + wish_y*wish_y);
-                if (w_mag > 0.001) { wish_x /= w_mag; wish_y /= w_mag; }
-                
-                double currentspeed = vx * wish_x + vy * wish_y;
-                double addspeed = rc.physMaxSpeed - currentspeed;
-                
-                if (addspeed > 0) {
-                    double accelspeed = rc.physAccelerate * dt * rc.physMaxSpeed;
-                    if (accelspeed > addspeed) accelspeed = addspeed;
-                    vx += accelspeed * wish_x;
-                    vy += accelspeed * wish_y;
-                }
+                PmAccelerate(vx, vy, wish_x, wish_y, rc.physMaxSpeed, rc, dt);
             }
             
             next->velocity[t1][t2][0] = vx;
@@ -155,12 +161,8 @@ void InitLUT() {
 
 void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int signY, const RuntimeConfig& rc, double& outVx, double& outVy) {
     (void)rc;
-    constexpr int64_t kTickUs = 15625;
-    constexpr int64_t kMaxHeldUs = 50 * kTickUs;
-    const int ticksX = static_cast<int>(
-        std::clamp(heldUsX, int64_t{0}, kMaxHeldUs) / kTickUs);
-    const int ticksY = static_cast<int>(
-        std::clamp(heldUsY, int64_t{0}, kMaxHeldUs) / kTickUs);
+    constexpr double kTickUs = 15625.0;
+    constexpr int kMaxTicks = 50;
 
     auto lut = s_lut.load(std::memory_order_acquire);
     if (!lut) {
@@ -168,12 +170,30 @@ void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int sig
         outVy = 0.0;
         return;
     }
-    
-    outVx = lut->velocity[ticksX][ticksY][0] * signX;
-    outVy = lut->velocity[ticksX][ticksY][1] * signY;
-    
-    // Apply speed limits if walking
-    // This is a simplification for walking
+
+    // Sub-tick: a key pressed mid-tick contributes a fractional accelerate
+    // step. Flooring to whole ticks under-estimated speed (-> early brake).
+    const auto split = [&](int64_t us, int& lo, int& hi, double& frac) {
+        const double t = std::clamp(static_cast<double>(std::max<int64_t>(us, 0)) / kTickUs,
+                                    0.0, static_cast<double>(kMaxTicks));
+        lo = static_cast<int>(t);
+        hi = std::min(lo + 1, kMaxTicks);
+        frac = t - lo;
+    };
+    int x0, x1, y0, y1;
+    double fx, fy;
+    split(heldUsX, x0, x1, fx);
+    split(heldUsY, y0, y1, fy);
+
+    for (int axis = 0; axis < 2; ++axis) {
+        const double v00 = lut->velocity[x0][y0][axis];
+        const double v10 = lut->velocity[x1][y0][axis];
+        const double v01 = lut->velocity[x0][y1][axis];
+        const double v11 = lut->velocity[x1][y1][axis];
+        const double v = (v00 * (1 - fx) + v10 * fx) * (1 - fy) +
+                         (v01 * (1 - fx) + v11 * fx) * fy;
+        (axis == 0 ? outVx : outVy) = v * (axis == 0 ? signX : signY);
+    }
 }
 
 int LookupStopDur2D(double vx, double vy, int wish_mode, bool crouch) {

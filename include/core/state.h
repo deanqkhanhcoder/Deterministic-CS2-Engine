@@ -17,6 +17,19 @@ struct WalkState {
     int64_t accumUs[5]          = {};   // per key
 };
 
+// Simulated player velocity (u/s), integrated with Valve friction+accelerate
+// from the keys currently injected into the game. wishX/wishY in {-1,0,1}
+// are valid for the interval since lastUs.
+struct VelocityTracker {
+    double  vx = 0.0;
+    double  vy = 0.0;
+    int64_t lastUs = -1;
+    int     wishX = 0;
+    int     wishY = 0;
+    double  speedScale = 1.0;
+};
+
+
 struct MemoryState {
     AxisDir lastDir[2]                   = { AxisDir::None, AxisDir::None };
     int64_t lastDirChangeTimeMs[2]       = {};
@@ -55,6 +68,7 @@ struct alignas(64) State {
     // ── Sub-states ──
     WalkState   walk;
     MemoryState mem;
+    VelocityTracker vel;
 
     // ── Script suspended state ──
     bool suspended = false;
@@ -81,6 +95,7 @@ struct alignas(64) State {
 
         walk = WalkState{};
         mem  = MemoryState{};
+        vel  = VelocityTracker{};
     }
 
 

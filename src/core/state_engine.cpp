@@ -229,6 +229,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.profileBrakeBias = cfg.brakeProfiles[cfg.activeBrakeProfileIndex].brake_bias_multiplier;
     out.profileAuthorityBiasMs = cfg.brakeProfiles[cfg.activeBrakeProfileIndex].authority_bias_ms;
     out.profileAggrCurve = cfg.brakeProfiles[cfg.activeBrakeProfileIndex].aggressiveness_curve;
+    out.profileAccuracyThreshold = cfg.brakeProfiles[cfg.activeBrakeProfileIndex].accuracyThreshold;
 
     // Instrumentation Metrics
     out.dbgLastHookUs = dbgLastHookUs.load(std::memory_order_relaxed);

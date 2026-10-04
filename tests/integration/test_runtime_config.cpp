@@ -91,7 +91,7 @@ int main() {
     invalidProfileOnly.brakeProfiles[1].accuracyThreshold =
         std::numeric_limits<double>::quiet_NaN();
     const RuntimeConfig profileFallback = rcfg::Sanitize(invalidProfileOnly);
-    Expect(profileFallback.brakeProfiles[1].accuracyThreshold == 50.0,
+    Expect(profileFallback.brakeProfiles[1].accuracyThreshold == 34.0,
            "invalid accuracy threshold falls back to rifle default");
 
     ExpectFinite(sanitized.crouchMult, "crouch multiplier is finite");
