@@ -18,8 +18,10 @@ namespace rcfg {
 constexpr size_t WORDS = (sizeof(RuntimeConfig) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
 static std::atomic<uint64_t> s_active[WORDS];
 static std::atomic<uint32_t> s_seq{0};
-static RuntimeConfig s_baseConfig; // Pure user config without SafeMode overrides
-static std::mutex s_writerMutex; // Seqlocks require exactly one writer.
+static RuntimeConfig s_userConfig;     // Pure user configuration
+static RuntimeConfig s_snapshotConfig; // Snapshot before entering safe mode or explicit capture
+static bool          s_hasSnapshot = false;
+static std::mutex    s_writerMutex;    // Seqlocks require exactly one writer.
 
 RuntimeConfig Get() {
     RuntimeConfig snapshot;
@@ -255,27 +257,33 @@ RuntimeConfig Sanitize(const RuntimeConfig& newCfg) {
     return validated;
 }
 
-void Apply(const RuntimeConfig& newCfg) {
-    std::lock_guard<std::mutex> writerLock(s_writerMutex);
-    RuntimeConfig validated = Sanitize(newCfg);
-    // UI editing and persistence receive the same finite, range-checked values.
-    s_baseConfig = validated;
+static void ApplySafeModeOverrides(RuntimeConfig& cfg) {
+    cfg.latencyMarginMs = 4;
+    cfg.minStopMs = 6;
+    cfg.walkMemoryMs = 80;
+    cfg.tapSpamWindowMs = 40;
+    cfg.stopStrengthMin = 0.40;
+    cfg.conflictIncrement = 0.15;
+    cfg.conflictDecrement = 0.15;
+    cfg.humanizeMinUs = 0;
+    cfg.humanizeMaxUs = 0;
+    if (cfg.spamIntervalMs < 4) {
+        cfg.spamIntervalMs = 4;
+    }
+}
 
+static void PublishLocked(const RuntimeConfig& published) {
     uint32_t seq = s_seq.load(std::memory_order_relaxed);
     
     // 1. Publish write-in-progress (odd seq) with release order
     s_seq.store(seq + 1, std::memory_order_release);
-    
-    // Release fence guarantees ARM visibility of the odd sequence before payload stores
     std::atomic_thread_fence(std::memory_order_release);
 
     uint64_t buffer[WORDS] = {0};
-    std::memcpy(buffer, &validated, sizeof(RuntimeConfig));
+    std::memcpy(buffer, &published, sizeof(RuntimeConfig));
     for (size_t i = 0; i < WORDS; ++i) {
         s_active[i].store(buffer[i], std::memory_order_relaxed);
     }
-
-    // Release fence guarantees payload stores are completed before publishing write-completed
     std::atomic_thread_fence(std::memory_order_release);
 
     // 2. Publish write-completed (even seq) with release order
@@ -285,20 +293,100 @@ void Apply(const RuntimeConfig& newCfg) {
     movement::InitLUT();
 
     telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::PROFILE_CHANGED, GetCurrentThreadId(), timing::NowUs(),
-        (int32_t)validated.activeBrakeProfileIndex, (uint32_t)validated.bhopMode, (uint32_t)validated.bhopEnabled, true };
+        (int32_t)published.activeBrakeProfileIndex, (uint32_t)published.bhopMode, (uint32_t)published.bhopEnabled, true };
     telemetry::g_forensicBuffer.Push(ev);
     telemetry::RequestForensicFlush();
 }
 
+void Apply(const RuntimeConfig& newCfg) {
+    std::lock_guard<std::mutex> writerLock(s_writerMutex);
+    RuntimeConfig sanitized = Sanitize(newCfg);
+    
+    // State transition tracking for Safe Mode
+    if (newCfg.safeModeEnabled && !s_userConfig.safeModeEnabled) {
+        // Turning Safe Mode ON -> capture snapshot of user config before safe mode
+        s_snapshotConfig = s_userConfig;
+        s_hasSnapshot = true;
+        s_userConfig = sanitized;
+        s_userConfig.safeModeEnabled = true;
+    } else if (!newCfg.safeModeEnabled && s_userConfig.safeModeEnabled) {
+        // Turning Safe Mode OFF -> restore snapshot if present
+        if (s_hasSnapshot) {
+            s_userConfig = s_snapshotConfig;
+        } else {
+            s_userConfig = sanitized;
+        }
+        s_userConfig.safeModeEnabled = false;
+    } else {
+        s_userConfig = sanitized;
+        if (!s_userConfig.safeModeEnabled) {
+            s_snapshotConfig = s_userConfig;
+            s_hasSnapshot = true;
+        }
+    }
+
+    RuntimeConfig effective = s_userConfig;
+    if (effective.safeModeEnabled) {
+        ApplySafeModeOverrides(effective);
+    }
+    PublishLocked(effective);
+}
+
+bool IsSafeMode() {
+    return Get().safeModeEnabled;
+}
+
+void SetSafeMode(bool enabled) {
+    std::lock_guard<std::mutex> writerLock(s_writerMutex);
+    if (s_userConfig.safeModeEnabled == enabled) return;
+    
+    if (enabled) {
+        s_snapshotConfig = s_userConfig;
+        s_hasSnapshot = true;
+        s_userConfig.safeModeEnabled = true;
+        RuntimeConfig effective = s_userConfig;
+        ApplySafeModeOverrides(effective);
+        PublishLocked(effective);
+    } else {
+        if (s_hasSnapshot) {
+            s_userConfig = s_snapshotConfig;
+        }
+        s_userConfig.safeModeEnabled = false;
+        PublishLocked(s_userConfig);
+    }
+}
+
+void TakeSnapshot() {
+    std::lock_guard<std::mutex> writerLock(s_writerMutex);
+    s_snapshotConfig = s_userConfig;
+    s_hasSnapshot = true;
+}
+
+bool RevertToSnapshot() {
+    std::lock_guard<std::mutex> writerLock(s_writerMutex);
+    if (!s_hasSnapshot) return false;
+    s_userConfig = s_snapshotConfig;
+    s_userConfig.safeModeEnabled = false;
+    PublishLocked(s_userConfig);
+    return true;
+}
+
+RuntimeConfig GetUserConfig() {
+    std::lock_guard<std::mutex> writerLock(s_writerMutex);
+    return s_userConfig;
+}
+
 RuntimeConfig GetMutable() {
     std::lock_guard<std::mutex> writerLock(s_writerMutex);
-    return s_baseConfig;
+    return s_userConfig;
 }
 
 void Init() {
     std::lock_guard<std::mutex> writerLock(s_writerMutex);
     RuntimeConfig def{};
-    s_baseConfig = def;
+    s_userConfig = def;
+    s_snapshotConfig = def;
+    s_hasSnapshot = true;
     uint64_t buffer[WORDS] = {0};
     std::memcpy(buffer, &def, sizeof(RuntimeConfig));
     for (size_t i = 0; i < WORDS; ++i) {
@@ -308,3 +396,4 @@ void Init() {
 }
 
 } // namespace rcfg
+

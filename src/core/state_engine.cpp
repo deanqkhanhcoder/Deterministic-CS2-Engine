@@ -164,7 +164,7 @@ State GetState() {
 }
 bool IsSuspended() { return s_suspendedAtomic.load(std::memory_order_acquire); }  // Thread-safe read
 
-void NotifyUI() {
+void NotifyStateChanged() {
     dbgLastNotifyUs.store(timing::NowUs(), std::memory_order_relaxed);
     dbgPublishCount.fetch_add(1, std::memory_order_relaxed);
     HWND target = s_hwnd;
@@ -390,6 +390,6 @@ void TakeSnapshot(RuntimeSnapshot& out) {
 
 }
 
-void SetHookInstalled(bool v) { s_hookInstalled = v; NotifyUI(); }
+void SetHookInstalled(bool v) { s_hookInstalled = v; NotifyStateChanged(); }
 
 } // namespace engine

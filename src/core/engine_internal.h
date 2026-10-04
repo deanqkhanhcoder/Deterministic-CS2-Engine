@@ -51,7 +51,7 @@ extern std::atomic<bool> s_suspendedAtomic;
 extern bool s_hookInstalled;
 
 void PublishEngineState();
-void NotifyUI();
+void NotifyStateChanged();
 void CommitLogicalStateFromInjection();
 void FlushAndCommitLogicalState(InjectionBatch& batch);
 

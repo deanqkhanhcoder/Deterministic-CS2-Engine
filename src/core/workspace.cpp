@@ -63,12 +63,6 @@ std::wstring GetProjectRootW() {
 
     std::wstring lowerPath = ToLower(fullPath);
 
-    // Runtime builds live under <project-root>\runtime\bin\.
-    size_t runtimeBinPos = lowerPath.rfind(L"\\runtime\\bin\\");
-    if (runtimeBinPos != std::wstring::npos) {
-        return fullPath.substr(0, runtimeBinPos + 1); // keep trailing slash
-    }
-
     // Look for \bin\ or \build\ boundaries to step back to the true workspace root.
     size_t binPos = lowerPath.rfind(L"\\bin\\");
     if (binPos != std::wstring::npos) {
@@ -100,19 +94,19 @@ std::string GetProjectRootA() {
 }
 
 std::wstring GetRuntimeRootW() {
-    return GetProjectRootW() + L"runtime\\";
+    return GetProjectRootW();
 }
 
 std::string GetRuntimeRootA() {
-    return GetProjectRootA() + "runtime\\";
+    return GetProjectRootA();
 }
 
 std::wstring GetBinRootW() {
-    return GetRuntimeRootW() + L"bin\\";
+    return GetProjectRootW();
 }
 
 std::string GetBinRootA() {
-    return GetRuntimeRootA() + "bin\\";
+    return GetProjectRootA();
 }
 
 std::wstring GetArtifactRootW() {

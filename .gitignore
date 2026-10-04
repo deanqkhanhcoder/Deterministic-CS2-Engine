@@ -1,24 +1,32 @@
-# Build Artifacts
+# Build artifacts
 /build/
-/build/obj/
 /obj/
 .agent/
 *.exe
+# To version the release binary, uncomment the next line:
+# !/marco.exe
 *.o
 *.obj
 *.pdb
 *.ilk
 
-# Runtime Output
-runtime/logs/
-runtime/captures/
-runtime/artifacts/
-runtime/crash/
-runtime/bin/
+# Runtime output (written next to the binary at the repo root)
+/logs/
+/captures/
+/artifacts/
+/crash/
+/marco.token
 *.log
 *.csv
 !tests/regression/fixtures/*.csv
 *.png
+
+# Local config (marco.ini holds per-user tuning)
+/marco.ini
+
+# Web UI
+/ui/node_modules/
+/ui/dist/
 
 # Python caches
 __pycache__/

@@ -19,7 +19,7 @@ void OnTimerExpired(Key k, uint64_t expectedTimerId) {
     bool _doNotify = false;
     int ki_k = ki(k);
     DLOG_TRACE(Runtime, "OnTimerExpired: Executing release for %s", keymap::KeyName[ki_k]);
-    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
+    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyStateChanged(); } } _notifier{_doNotify};
     InjectionBatch batch;
     
 #if MARCO_ENABLE_FORENSIC

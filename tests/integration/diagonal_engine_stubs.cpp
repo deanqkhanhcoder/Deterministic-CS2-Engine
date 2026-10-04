@@ -104,7 +104,7 @@ std::mutex s_operationMutex;
 std::atomic<bool> s_suspendedAtomic{false};
 bool s_hookInstalled = true;
 void PublishEngineState() {}
-void NotifyUI() {}
+void NotifyStateChanged() {}
 State GetState() {
     std::lock_guard<std::mutex> lock(s_stateMutex);
     return s_state;

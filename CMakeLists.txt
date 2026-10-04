@@ -1,16 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Keep Debug, Profile, and Release as first-class configurations.  Profile is
-# deliberately a custom CMake configuration rather than an alias for Release:
-# it enables the diagnostic/ETW sources without changing the release manifest.
-if(CMAKE_CONFIGURATION_TYPES)
-    list(APPEND CMAKE_CONFIGURATION_TYPES Profile)
-    list(REMOVE_DUPLICATES CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_CONFIGURATION_TYPES "${CMAKE_CONFIGURATION_TYPES}" CACHE STRING "Build configurations" FORCE)
-elseif(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose Debug, Profile, or Release" FORCE)
+# Two first-class configurations only: Debug (marco_debug.exe) and Release (marco.exe).
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose Debug or Release" FORCE)
 endif()
-set(CMAKE_CXX_FLAGS_PROFILE "-O2 -g" CACHE STRING "Flags used by the Profile configuration")
 
 project(marco LANGUAGES CXX)
 
@@ -32,6 +25,7 @@ set(MARCO_COMMON_CORE_SOURCES
     src/core/injection.cpp
     src/core/input_capture.cpp
     src/core/input_router.cpp
+    src/core/ipc_server.cpp
     src/core/main.cpp
     src/core/movement_reconstruction.cpp
     src/core/runtime_config.cpp
@@ -48,19 +42,11 @@ set(MARCO_DIAGNOSTIC_CORE_SOURCES
     src/core/analysis_toolkit.cpp
     src/core/etw_controller.cpp
 )
-set(MARCO_UI_SOURCES
-    src/ui/ui_analysis.cpp
-    src/ui/ui_dashboard.cpp
-    src/ui/ui_layout.cpp
-    src/ui/ui_main.cpp
-    src/ui/ui_settings.cpp
-)
 
 add_library(marco_build_options INTERFACE)
 target_include_directories(marco_build_options INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/core"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/ui"
 )
 target_compile_definitions(marco_build_options INTERFACE WIN32_LEAN_AND_MEAN)
 
@@ -79,33 +65,32 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
-add_executable(marco WIN32 ${MARCO_COMMON_CORE_SOURCES} ${MARCO_UI_SOURCES})
-# Release intentionally omits diagnostics-only implementation units.  Debug
-# and Profile contain every source in MARCO_DIAGNOSTIC_CORE_SOURCES, exactly as
-# the Makefile does.
+# Headless daemon: Release has no console window, Debug keeps one for logs.
+add_executable(marco ${MARCO_COMMON_CORE_SOURCES})
+set_target_properties(marco PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release>)
+# Release intentionally omits diagnostics-only implementation units.
 target_sources(marco PRIVATE
     $<$<NOT:$<CONFIG:Release>>:${MARCO_DIAGNOSTIC_CORE_SOURCES}>
 )
 target_link_libraries(marco PRIVATE
-    marco_build_options user32 winmm gdi32 comdlg32 avrt
+    marco_build_options user32 winmm ws2_32 avrt
     $<$<NOT:$<CONFIG:Release>>:tdh>
     $<$<NOT:$<CONFIG:Release>>:dbghelp>
 )
 target_compile_definitions(marco PRIVATE
-    $<$<CONFIG:Profile>:MARCO_PROFILE>
     $<$<CONFIG:Release>:MARCO_RELEASE>
 )
 if(MINGW)
     target_link_options(marco PRIVATE -static)
 endif()
 
-# Keep CMake products separate from runtime state.  Building the application
-# is safe; tests and regression never start it or read runtime output.
+# Binaries land in the repository root next to marco.ini.
 set_target_properties(marco PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug"
-    RUNTIME_OUTPUT_DIRECTORY_PROFILE "${CMAKE_BINARY_DIR}/bin/Profile"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}"
+    OUTPUT_NAME_DEBUG marco_debug
+    OUTPUT_NAME_RELEASE marco
 )
 
 # Every test has one and only one main() and is linked from an explicit source
@@ -233,7 +218,7 @@ set_tests_properties(marco_test_hook_deferral PROPERTIES
 # RuntimeConfig stub rather than runtime configuration, telemetry, hooks, or
 # any input-injection implementation.
 add_executable(marco_physics_fixture_simulator EXCLUDE_FROM_ALL
-    tools/forensics/deterministic_simulator.cpp
+    tests/regression/deterministic_simulator.cpp
     src/core/movement_reconstruction.cpp
     tests/unit/movement_runtime_config_stubs.cpp
 )

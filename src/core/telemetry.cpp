@@ -57,8 +57,6 @@ static const char* ForensicTrapName(ForensicTrapType type) {
 static const char* BuildTypeName() {
 #if defined(MARCO_RELEASE)
     return "Release";
-#elif defined(MARCO_PROFILE)
-    return "Profile";
 #else
     return "Debug";
 #endif

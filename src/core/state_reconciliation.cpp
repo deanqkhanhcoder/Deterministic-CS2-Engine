@@ -36,7 +36,7 @@ void ToggleSuspend() {
         capture::Reinstall();
         RebuildState();
     }
-    NotifyUI();
+    NotifyStateChanged();
 }
 
 void ClearHeldKeys(const target_platform::TargetIdentity& target) {
@@ -132,7 +132,7 @@ void RebuildState() {
         telemetry::g_forensicBuffer.Push(evAfter);
     }
     FlushAndCommitLogicalState(batch);
-    NotifyUI();
+    NotifyStateChanged();
 }
 
 void ReconcileInternal(bool suspending, InjectionBatch& batch) {

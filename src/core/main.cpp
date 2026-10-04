@@ -19,7 +19,7 @@
 #include "state_engine.h"
 #include "input_capture.h"
 #include "bhop.h"
-#include "ui_main.h"
+#include "ipc_server.h"
 
 #include "runtime_config.h"
 #include "config_io.h"
@@ -109,20 +109,20 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             engine::ToggleSuspend();
             if (engine::IsSuspended()) bhop::OnSpaceUp();
             bhop::OnSuspendChanged();
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             DLOG_WARN(Runtime, "Suspend: %s", (engine::IsSuspended() ? "ON" : "OFF"));
             return 0;
         }
 
         case WM_BHOP_TOGGLE: {
             bhop::ToggleEnabled();
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             return 0;
         }
 
         case WM_BHOP_CYCLE_MODE: {
             bhop::CycleMode();
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             return 0;
         }
 
@@ -131,19 +131,19 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             cfg.activeBrakeProfileIndex = (cfg.activeBrakeProfileIndex % 4) + 1;
             rcfg::Apply(cfg);
             config_io::Save(cfg);
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             return 0;
         }
 
         case WM_STATE_DIRTY: {
             engine::ClearStateDirty();
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             return 0;
         }
 
         case WM_TARGET_REFRESH_REQUEST: {
             capture::ReconcileTargetFocus();
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             return 0;
         }
 
@@ -176,7 +176,7 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                          static_cast<int64_t>(failsafeReleased),
                          static_cast<int64_t>(pendingReleases));
             }
-            ui::OnStateChanged();
+            ipc::NotifyStateChanged();
             return 0;
         }
 
@@ -307,32 +307,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // â”€â”€ Start timer thread â”€â”€
     timing::StartTimerThread(msgHwnd);
 
-#if MARCO_ENABLE_UI
-    // â”€â”€ Create UI window â”€â”€
-    HWND uiHwnd = ui::Create(hInst, msgHwnd);
-    if (!uiHwnd) {
-        MessageBoxW(nullptr, L"Failed to create UI window.", L"Error", MB_ICONERROR);
-        bhop::Shutdown();
-        timing::StopTimerThread();
-        telemetry::StopTelemetryThread();
-#if MARCO_ENABLE_FORENSIC
-        telemetry::ShutdownForensics();
-#endif
-        telemetry::Shutdown();
-        target_platform::Shutdown();
-        dlog::Shutdown();
-        RestoreTimerResolution();
-        ReleaseMutex(mutex);
-        CloseHandle(mutex);
-        return 1;
+    SAFE_STARTUP_TRACE("IPC_SERVER_INIT");
+    if (!ipc::StartServer(47650, msgHwnd)) {
+        DLOG_WARN(Startup, "Failed to start local IPC server on port 47650");
     }
-#endif
+
 
     SAFE_STARTUP_TRACE("HOOK_INSTALL");
     // â”€â”€ Install hooks â”€â”€
     if (!capture::Install(msgHwnd)) {
         MessageBoxW(nullptr, L"Failed to install input hooks.\nRun as Administrator?",
                     L"Error", MB_ICONERROR);
+        ipc::StopServer();
         bhop::Shutdown();
         timing::StopTimerThread();
         telemetry::StopTelemetryThread();
@@ -341,9 +327,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 #endif
         telemetry::Shutdown();
         target_platform::Shutdown();
-#if MARCO_ENABLE_UI
-        ui::Destroy();
-#endif
+
         dlog::Shutdown();
         RestoreTimerResolution();
         DestroyWindow(msgHwnd);
@@ -473,11 +457,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
 #endif
     
     // Safe to call Get() now - all threads stopped
+    ipc::StopServer();
     RuntimeConfig finalCfg = rcfg::Get();
     config_io::Save(finalCfg);
-#if MARCO_ENABLE_UI
-    ui::Destroy();
-#endif
+
     if (!dlog::Flush()) {
         DLOG_ERR(Shutdown, "Logger flush timed out with %lld pending entries",
                  static_cast<int64_t>(dlog::PendingCount()));

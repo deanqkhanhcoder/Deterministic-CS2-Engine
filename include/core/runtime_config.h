@@ -127,6 +127,21 @@ namespace rcfg {
     // to race and corrupt the seqlock writer sequence.
     RuntimeConfig GetMutable();
 
+    // Return true if safe mode is currently enabled
+    bool IsSafeMode();
+
+    // Toggle or set safe mode with automatic snapshot backup & restore
+    void SetSafeMode(bool enabled);
+
+    // Explicitly capture snapshot of current user configuration
+    void TakeSnapshot();
+
+    // Revert current configuration to pre-safemode / captured snapshot
+    bool RevertToSnapshot();
+
+    // Return the pure user configuration (without transient safe mode overrides)
+    RuntimeConfig GetUserConfig();
+
     // Initialize with defaults
     void Init();
 }

@@ -40,7 +40,7 @@ void HandleKeyDown(Key k, bool routeSemantic,
     DLOG_TRACE(Runtime, "HandleKeyDown: %s (routeSemantic=%d)", keymap::KeyName[ki_k], routeSemantic);
 
     bool _doNotify = false;
-    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
+    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyStateChanged(); } } _notifier{_doNotify};
     InjectionBatch batch(dispatchTarget);
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
@@ -130,7 +130,7 @@ void HandleKeyUp(Key k, bool routeSemantic,
     DLOG_TRACE(Runtime, "HandleKeyUp: %s (routeSemantic=%d)", keymap::KeyName[ki_k], routeSemantic);
 
     bool _doNotify = false;
-    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyUI(); } } _notifier{_doNotify};
+    struct _Notifier { bool& n; ~_Notifier() { if(n) NotifyStateChanged(); } } _notifier{_doNotify};
 
     InjectionBatch batch(dispatchTarget);
     {
@@ -199,7 +199,7 @@ void OnSysKeyChange(bool isLCtrl, bool down, bool routeSemantic) {
     }
     
     if (!routeSemantic) return;
-    NotifyUI();
+    NotifyStateChanged();
 }
 
 void OnShiftChange(bool down, bool routeSemantic) {
@@ -227,7 +227,7 @@ void OnShiftChange(bool down, bool routeSemantic) {
     }
     
     if (!routeSemantic) return;
-    NotifyUI();
+    NotifyStateChanged();
 }
 
 void OnSpaceDown(bool routeSemantic) {
@@ -241,7 +241,7 @@ void OnSpaceDown(bool routeSemantic) {
         }
         PublishEngineState();
     }
-    NotifyUI();
+    NotifyStateChanged();
 }
 
 void OnSpaceUp() {
@@ -250,7 +250,7 @@ void OnSpaceUp() {
         s_state.spacePhys = false;
         PublishEngineState();
     }
-    NotifyUI();
+    NotifyStateChanged();
 }
 
 } // namespace engine
