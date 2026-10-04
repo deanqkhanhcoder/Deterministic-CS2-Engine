@@ -6,6 +6,14 @@ Operating as a headless background daemon with a local loopback IPC REST/SSE ser
 
 ---
 
+## Release v28 — Live Telemetry
+
+The Telemetry HUD places velocity, the last brake verdict/duration, and P99 jitter above a live velocity trace and W/A/S/D matrix. Switch **VELOCITY** / **QPC / WAKE** to inspect either signal. Every SSE packet appends to a 100-sample, 3.3-second sliding window; axes auto-scale with floors of 250 u/s and 100 µs. The dashed accuracy line follows the active weapon profile (including 17 u/s for Sniper).
+
+Velocity is a Source-physics estimate from delivered keys, advanced on a snapshot copy without changing the movement engine. Timing mode shows P50 statistics from the last 128 timings; idle zeros are expected before the first timing sample. Missing packets leave visible gaps, and the packet-rate indicator falls to zero after disconnect. Brake ticks are fractional 64 Hz equivalents, not truncated integers; the phase timeline is a guide.
+
+UI verification: `cd ui`, then `npm test` and `npm run build` (includes TypeScript validation).
+
 ## Key Highlights
 
 - **Headless Daemon Architecture**: The core C++ engine runs as a zero-jitter, background daemon. No legacy GDI windows or message loop UI stalls interfere with sub-tick input processing.

@@ -85,7 +85,13 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
         with urllib.request.urlopen(BASE + "/api/events?token=" + TOKEN, timeout=5) as events:
             assert events.readline().decode().strip() == "event: telemetry"
             initial = events.readline().decode().strip()
-            assert json.loads(initial.removeprefix("data: "))["suspended"] is False
+            snapshot = json.loads(initial.removeprefix("data: "))
+            assert snapshot["suspended"] is False
+            assert snapshot["hud"]["lastResult"] == "IDLE"
+            assert snapshot["hud"]["lastBrakeMs"] == snapshot["hud"]["lastBrakeUs"] / 1000
+            assert snapshot["hud"]["lastBrakeTicks"] == snapshot["hud"]["lastBrakeUs"] / 15625
+            assert snapshot["metrics"]["timerJitterP99Us"] >= snapshot["metrics"]["timerJitterUs"]
+            assert snapshot["metrics"]["timerSampleCount"] >= 0
             request("/api/config", {"activeProfileIndex": 2})
             for _ in range(500):
                 line = events.readline().decode().strip()

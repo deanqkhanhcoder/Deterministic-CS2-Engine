@@ -44,6 +44,23 @@ int main() {
     Expect(diagonalVx == diagonalBaselineVx && diagonalVy == diagonalBaselineVy,
            "negative diagonal hold must clamp to zero tick");
 
+    // SSE snapshots must advance a copy while a key remains held.
+    VelocityTracker published;
+    published.lastUs = 1000000;
+    published.wishX = 1;
+    auto firstFrame = published;
+    auto nextFrame = published;
+    AdvanceVelocity(firstFrame, 1033000, rc);
+    AdvanceVelocity(nextFrame, 1066000, rc);
+    Expect(firstFrame.vx > 0 && nextFrame.vx > firstFrame.vx,
+           "successive snapshots show acceleration without a key transition");
+    Expect(published.vx == 0 && published.lastUs == 1000000,
+           "telemetry leaves authoritative movement state unchanged");
+    nextFrame.wishX = 0;
+    const double preRelease = nextFrame.vx;
+    AdvanceVelocity(nextFrame, 1099000, rc);
+    Expect(nextFrame.vx < preRelease, "snapshot shows deceleration after release");
+
     // Tracked velocity: run right to full speed, then press left for 3 ticks.
     // Velocity must be carried over (still moving right), never reset to 0.
     VelocityTracker trk;

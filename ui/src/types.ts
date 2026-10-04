@@ -83,6 +83,8 @@ export interface TelemetryData {
     hookLatencyP50Us: number;
     hookLatencyP99Us: number;
     timerJitterUs: number;
+    timerJitterP99Us: number;
+    timerSampleCount: number;
     wakeOversleepUs: number;
     spinDurationUs: number;
     stateMutationLatencyUs: number;

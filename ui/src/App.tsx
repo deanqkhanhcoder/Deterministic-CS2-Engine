@@ -4,6 +4,9 @@ import {
   Crosshair, Sliders, Check, Save
 } from 'lucide-react';
 import { RuntimeConfig, TelemetryData, BrakeProfile, EngineState } from './types';
+import TelemetryDashboard from './TelemetryDashboard';
+import { appendTelemetry } from './telemetry';
+import type { TraceSample } from './telemetry';
 
 const DEFAULT_PORT = 47650;
 const PROFILE_NAMES = ['Disabled', 'Rifle (AK/M4)', 'Pistol (USP/Glock)', 'Sniper (AWP/Scout)', 'SMG (MP9/Mac10)'];
@@ -49,7 +52,7 @@ export default function App() {
   const configPendingRef = useRef(false);
   const serverConfigRef = useRef<RuntimeConfig>(DEFAULT_CONFIG);
   const configFetchId = useRef(0);
-  const timelineCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [traceHistory, setTraceHistory] = useState<TraceSample[]>([]);
 
   // Auto-fetch local token if missing
   useEffect(() => {
@@ -134,6 +137,8 @@ export default function App() {
       try {
         const data: TelemetryData = JSON.parse(e.data);
         setTelemetry(data);
+        const receivedAt = performance.now();
+        setTraceHistory(previous => appendTelemetry(previous, data, receivedAt));
         setConnected(true);
       } catch {
         setStatusMsg('Invalid telemetry received from daemon');
@@ -156,57 +161,6 @@ export default function App() {
       es.close();
     };
   }, [host, token]);
-
-  // Draw real-time timeline graph
-  useEffect(() => {
-    const canvas = timelineCanvasRef.current;
-    if (!canvas || !telemetry?.timeline) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const { width, height } = canvas;
-    ctx.clearRect(0, 0, width, height);
-
-    ctx.strokeStyle = '#1e2433';
-    ctx.lineWidth = 1;
-    for (let y = 0; y < height; y += 25) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-
-    const { jitter, oversleep } = telemetry.timeline;
-    const count = jitter.length;
-    if (count === 0) return;
-
-    const step = count > 1 ? width / (count - 1) : 0;
-    const maxVal = 200; // 200 us scale
-
-    // Jitter (Cyan)
-    ctx.strokeStyle = '#22d3ee';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let i = 0; i < count; i++) {
-      const val = Math.min(jitter[i] / 10, maxVal);
-      const y = height - (val / maxVal) * (height - 10) - 5;
-      if (i === 0) ctx.moveTo(0, y);
-      else ctx.lineTo(i * step, y);
-    }
-    ctx.stroke();
-
-    // Oversleep (Amber)
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    for (let i = 0; i < count; i++) {
-      const val = Math.min(oversleep[i] / 10, maxVal);
-      const y = height - (val / maxVal) * (height - 10) - 5;
-      if (i === 0) ctx.moveTo(0, y);
-      else ctx.lineTo(i * step, y);
-    }
-    ctx.stroke();
-  }, [telemetry]);
 
   // Serialize config mutations; SSE reads cannot overwrite optimistic updates.
   const mutateConfig = async (path: string, body: unknown, message: string,
@@ -292,15 +246,11 @@ export default function App() {
   };
 
   const activeWeapon = config.brakeProfiles[selectedProfileIndex] || config.brakeProfiles[1];
-  const curSpeed = telemetry?.hud?.currentSpeed ?? 0.0;
-  const lastBrakeMs = telemetry?.hud?.lastBrakeMs ?? 0;
-  const lastBrakeTicks = telemetry?.hud?.lastBrakeTicks ?? 0;
-  const lastResult = telemetry?.hud?.lastResult ?? 'FINE';
 
   return (
     <div className="min-h-screen bg-[#0c0e14] text-slate-200 flex flex-col font-sans selection:bg-cyan-500/20">
       {/* ── Precision Utility Header ── */}
-      <header className="border-b border-[#1b202e] bg-[#121622] px-5 py-2.5 flex items-center justify-between gap-4 sticky top-0 z-50">
+      <header className="border-b border-[#1b202e] bg-[#121622] px-5 py-2.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-mono font-bold text-xs tracking-wider">
             MARCO
@@ -308,11 +258,11 @@ export default function App() {
           <span className="text-xs font-mono font-semibold tracking-wide text-slate-300">
             DETERMINISTIC CS2 MOTION ENGINE
           </span>
-          <span className="text-[11px] text-slate-500 font-mono">v27.8</span>
+          <span className="text-[11px] text-slate-500 font-mono">v28</span>
         </div>
 
         {/* Global Action Bar */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* CS2 Target Status */}
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0c0e14] border border-[#1b202e] text-[11px] font-mono">
             <span className={`w-2 h-2 rounded-full ${telemetry?.targetActive ? 'bg-emerald-400' : 'bg-slate-600'}`} />
@@ -372,14 +322,14 @@ export default function App() {
 
       {/* ── Status Toast ── */}
       {statusMsg && (
-        <div className="bg-cyan-500/10 border-b border-cyan-500/20 px-5 py-1.5 text-xs font-mono text-cyan-300 flex items-center justify-between">
-          <span>{statusMsg}</span>
-          <button onClick={() => setStatusMsg('')} className="text-slate-400 hover:text-white">✕</button>
+        <div className="fixed bottom-4 right-4 z-50 max-w-[calc(100vw-2rem)] rounded-lg bg-slate-900 border border-slate-700 px-4 py-3 text-xs font-mono text-cyan-300 flex items-center gap-4 shadow-lg">
+          <span role="status">{statusMsg}</span>
+          <button aria-label="Dismiss notification" onClick={() => setStatusMsg('')} className="text-slate-400 hover:text-white">✕</button>
         </div>
       )}
 
       {/* ── Tab Bar ── */}
-      <div className="border-b border-[#1b202e] bg-[#0f121a] px-5 flex gap-4">
+      <div className="border-b border-[#1b202e] bg-[#0f121a] px-5 flex gap-4 overflow-x-auto">
         {[
           { id: 'telemetry', label: 'TELEMETRY HUD', icon: Activity },
           { id: 'profiles', label: 'WEAPON PROFILES & TUNING', icon: Crosshair },
@@ -392,7 +342,7 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`py-2.5 text-xs font-mono font-semibold flex items-center gap-2 border-b-2 transition ${
+              className={`py-2.5 whitespace-nowrap text-xs font-mono font-semibold flex items-center gap-2 border-b-2 transition ${
                 active 
                   ? 'border-cyan-400 text-cyan-400' 
                   : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -410,164 +360,8 @@ export default function App() {
         
         {/* ════ TAB 1: TELEMETRY HUD ════ */}
         {activeTab === 'telemetry' && (
-          <div className="space-y-4">
-            {/* Top Stat Gauges */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 font-mono">
-              {/* Realtime Velocity */}
-              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
-                <div className="text-[11px] text-slate-400 uppercase tracking-wider">Realtime Velocity</div>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className={`text-2xl font-bold tracking-tight ${curSpeed <= 34.0 ? 'text-emerald-400' : curSpeed <= 150.0 ? 'text-amber-400' : 'text-slate-100'}`}>
-                    {curSpeed.toFixed(1)}
-                  </span>
-                  <span className="text-xs text-slate-500">u/s</span>
-                  {curSpeed <= 34.0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 ml-auto">
-                      ACCURATE
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Last Counter-Strafe Result */}
-              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
-                <div className="text-[11px] text-slate-400 uppercase tracking-wider">Brake Result</div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className={`text-xl font-bold tracking-tight ${
-                    lastResult === 'FINE' ? 'text-emerald-400' : lastResult === 'EARLY' ? 'text-rose-400' : 'text-amber-400'
-                  }`}>
-                    {lastResult}
-                  </span>
-                  <span className="text-xs text-slate-400">
-                    Pre: {telemetry?.hud?.lastPreSpeed?.toFixed(0) || '215'} u/s
-                  </span>
-                </div>
-              </div>
-
-              {/* Last Brake Duration */}
-              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
-                <div className="text-[11px] text-slate-400 uppercase tracking-wider">Last Brake Hold</div>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold text-cyan-300 tracking-tight">
-                    {lastBrakeMs || 93}
-                  </span>
-                  <span className="text-xs text-slate-500">ms ({lastBrakeTicks || 6} ticks)</span>
-                </div>
-              </div>
-
-              {/* Timer Jitter & CPU Core */}
-              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
-                <div className="text-[11px] text-slate-400 uppercase tracking-wider">QPC Timer Jitter</div>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold text-cyan-300 tracking-tight">
-                    {telemetry?.metrics?.timerJitterUs || 0}
-                  </span>
-                  <span className="text-xs text-slate-500">µs (Core #{telemetry?.affinity?.timingCore ?? 0})</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Sub-Tick Visualizer & Rolling Graph */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Sub-Tick Tick Timeline & Key Matrix */}
-              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-4 space-y-4">
-                <div className="flex items-center justify-between border-b border-[#1b202e] pb-2">
-                  <span className="text-xs font-mono font-bold text-slate-300">SUB-TICK TIMELINE</span>
-                  <span className="text-[10px] font-mono text-cyan-400">64-TICK ENGINE STEP</span>
-                </div>
-
-                {/* Tick Visualization Blocks */}
-                <div className="space-y-1.5 font-mono text-[11px]">
-                  <div className="flex justify-between text-slate-400 text-[10px]">
-                    <span>T0: Release</span>
-                    <span>T1-T6: Counter-Accel</span>
-                    <span>T7: Settle (&lt;34 u/s)</span>
-                  </div>
-                  <div className="grid grid-cols-8 gap-1 h-5">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map(tick => {
-                      const isBrakeActive = tick <= (lastBrakeTicks || 6);
-                      const isComplete = tick === 7;
-                      return (
-                        <div
-                          key={tick}
-                          className={`rounded border flex items-center justify-center text-[10px] font-bold ${
-                            isComplete 
-                              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                              : isBrakeActive
-                                ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
-                                : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
-                          }`}
-                        >
-                          T{tick}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Movement Key State Matrix */}
-                <div className="border-t border-[#1b202e] pt-3">
-                  <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex justify-between">
-                    <span>KEY ROUTER MATRIX</span>
-                    <span className="text-[10px] text-slate-500">PHYS vs SYNTHETIC</span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 max-w-[200px] mx-auto">
-                    <div />
-                    <div className={`p-2 rounded border text-center font-mono ${
-                      telemetry?.keys?.phys[0] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
-                      telemetry?.keys?.logical[0] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
-                    }`}>
-                      W
-                    </div>
-                    <div />
-
-                    <div className={`p-2 rounded border text-center font-mono ${
-                      telemetry?.keys?.phys[2] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
-                      telemetry?.keys?.logical[2] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
-                    }`}>
-                      A
-                    </div>
-                    <div className={`p-2 rounded border text-center font-mono ${
-                      telemetry?.keys?.phys[1] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
-                      telemetry?.keys?.logical[1] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
-                    }`}>
-                      S
-                    </div>
-                    <div className={`p-2 rounded border text-center font-mono ${
-                      telemetry?.keys?.phys[3] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
-                      telemetry?.keys?.logical[3] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
-                    }`}>
-                      D
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Real-time Canvas Graph */}
-              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-4 lg:col-span-2 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between border-b border-[#1b202e] pb-2 mb-3">
-                    <span className="text-xs font-mono font-bold text-slate-300">REALTIME QPC JITTER & OVERSLEEP TRACE</span>
-                    <div className="flex items-center gap-3 text-[11px] font-mono">
-                      <span className="text-cyan-400">■ Jitter (µs)</span>
-                      <span className="text-amber-400">■ Oversleep (µs)</span>
-                    </div>
-                  </div>
-                  <div className="bg-[#0c0e14] border border-[#1b202e] rounded p-2 h-44">
-                    <canvas ref={timelineCanvasRef} width={600} height={160} className="w-full h-full" />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-4 gap-2 font-mono text-[11px] mt-3 border-t border-[#1b202e] pt-3 text-slate-400">
-                  <div>Hook P50: <span className="text-slate-200 font-semibold">{telemetry?.metrics?.hookLatencyP50Us || 0} µs</span></div>
-                  <div>Hook P99: <span className="text-slate-200 font-semibold">{telemetry?.metrics?.hookLatencyP99Us || 0} µs</span></div>
-                  <div>Wake Oversleep: <span className="text-amber-400 font-semibold">{telemetry?.metrics?.wakeOversleepUs || 0} µs</span></div>
-                  <div>Spin Duration: <span className="text-cyan-400 font-semibold">{telemetry?.metrics?.spinDurationUs || 0} µs</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <TelemetryDashboard telemetry={telemetry} history={traceHistory} connected={connected}
+            threshold={telemetry?.profile?.accuracyThreshold ?? config.brakeProfiles[config.activeBrakeProfileIndex].accuracyThreshold} />
         )}
 
         {/* ════ TAB 2: WEAPON PROFILES & TUNING ════ */}

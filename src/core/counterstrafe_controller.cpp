@@ -179,7 +179,7 @@ static thread_local NoiseGenerator s_noise;
 // Telemetry globals for last brake event
 alignas(64) std::atomic<int64_t> g_lastBrakeUs{0};
 alignas(64) std::atomic<int64_t> g_lastPreSpeedTenths{0};
-alignas(64) std::atomic<uint32_t> g_lastBrakeResultCode{1}; // 1=FINE, 2=EARLY, 3=OVER
+alignas(64) std::atomic<uint32_t> g_lastBrakeResultCode{0}; // 0=IDLE, 1=FINE, 2=EARLY, 3=OVER
 
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     const RuntimeConfig& rc = rcfg::Get();

@@ -147,3 +147,12 @@ cmake --build build/make-tests --target check --parallel
 - `python tests/integration/test_ipc_dashboard.py`: kiểm thử daemon thật trong thư mục tạm khi port `47650` trống; xác nhận icon nhúng, tray Toggle/Exit (gồm client HTTP chưa gửi đủ body), SSE, Power, profile, SAFE MODE, snapshot, reset và lưu/đọc `MomentumMemoryMs`. Không thuộc suite desktop-safe vì khởi động daemon có hooks thật.
 
 `POST /api/state` nhận `{ "suspended": true/false }` và trả telemetry. `POST /api/config` nhận `activeProfileIndex` (alias của `activeBrakeProfileIndex`), mảng `brakeProfiles` 5 phần tử hoặc patch `profile_1`…`profile_4`. JSON telemetry SSE được xuất một dòng để mỗi sự kiện luôn parse được.
+
+
+## Release v28 — Telemetry Dashboard
+
+- `ui/src/TelemetryDashboard.tsx`: F-pattern với hero velocity, verdict/duration, P99/core affinity; trace bên trái (~63%), key matrix/timeline bên phải; micro-diagnostics phía dưới.
+- `ui/src/telemetry.ts`: lịch sử 100 packet SSE, cửa sổ 3.3s, reset khi uptime daemon giảm; trục Y tối thiểu 250 u/s hoặc 100 µs. Canvas dùng `requestAnimationFrame` và kích thước theo device pixel ratio; ngắt đường khi mất packet >250 ms. Idle không tạo mẫu giả.
+- `state_engine.cpp`: publish `VelocityTracker` cùng state, extrapolate bản sao bằng `AdvanceVelocity` tại snapshot; không đọc `s_state.vel` ngoài khóa hoặc sửa state engine từ telemetry. Timing stats được cập nhật cả sau khi timer ngắn đã kết thúc; `timerJitterP99Us` và `timerSampleCount` được xuất qua IPC.
+- `lastBrakeMs` / `lastBrakeTicks` giữ phần thập phân (tick equivalents @64 Hz). UI không còn fallback 93 ms / 6 ticks / 215 u/s; timeline chỉ là phase guide.
+- Kiểm thử: `cd ui; npm test; npm run build`; `cmake --build build/make-tests --target check`; `mingw32-make release`.

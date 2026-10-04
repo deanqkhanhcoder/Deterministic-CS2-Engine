@@ -39,6 +39,7 @@ struct EngineStatePublication {
     bool phys[4];
     bool logical[4];
     bool bundleActive;
+    VelocityTracker velocity;
 
 };
 constexpr size_t PUB_WORDS = (sizeof(EngineStatePublication) + sizeof(uint64_t) - 1) / sizeof(uint64_t);
@@ -79,7 +80,8 @@ std::atomic<bool> s_suspendedAtomic{false};
 bool s_hookInstalled = false;
 
 void PublishEngineState() {
-    EngineStatePublication pub;
+    EngineStatePublication pub{};
+    pub.velocity = s_state.vel;
     pub.suspended = s_state.suspended;
     pub.axisState[0] = s_state.axisState[0];
     pub.axisState[1] = s_state.axisState[1];
@@ -281,7 +283,10 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
 
     // Tactical Telemetry HUD values
-    out.currentSpeed = std::hypot(s_state.vel.vx, s_state.vel.vy);
+    // Extrapolate a published copy; telemetry never mutates the input engine.
+    auto velocity = pub.velocity;
+    movement::AdvanceVelocity(velocity, timing::NowUs(), cfg);
+    out.currentSpeed = std::hypot(velocity.vx, velocity.vy);
     out.lastBrakeUs = g_lastBrakeUs.load(std::memory_order_relaxed);
     out.lastPreSpeed = static_cast<double>(g_lastPreSpeedTenths.load(std::memory_order_relaxed)) / 10.0;
     uint32_t resCode = g_lastBrakeResultCode.load(std::memory_order_relaxed);
@@ -308,7 +313,7 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.hookLatencyP50Us = hookP50;
     out.hookLatencyP99Us = hookP99;
 
-    if (timingActive) {
+    { // Short brakes may finish between SSE packets: always refresh stats.
         int64_t jitterP50 = 0, jitterP99 = 0, jitterAvg = 0;
         int64_t oversleepP50 = 0, oversleepP99 = 0, oversleepAvg = 0;
         int64_t spinP50 = 0, spinP99 = 0, spinAvg = 0;
@@ -318,6 +323,8 @@ void TakeSnapshot(RuntimeSnapshot& out) {
         telemetry::g_spinDuration.GetStats(spinP50, spinP99, spinAvg);
 
         cachedTimerJitterUs = jitterP50;
+        out.timerJitterP99Us = jitterP99;
+        out.timerSampleCount = telemetry::g_timerJitter.index.load(std::memory_order_relaxed);
         cachedWakeOversleepUs = oversleepP50;
         cachedSpinDurationUs = spinP50;
     }

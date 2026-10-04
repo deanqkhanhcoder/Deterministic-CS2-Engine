@@ -51,6 +51,8 @@ struct RuntimeSnapshot {
     int64_t   hookLatencyP50Us;
     int64_t   hookLatencyP99Us;
     int64_t   timerJitterUs;
+    int64_t   timerJitterP99Us;
+    uint32_t  timerSampleCount;
     int64_t   wakeOversleepUs;
     int64_t   spinDurationUs;
     int64_t   stateMutationLatencyUs;
