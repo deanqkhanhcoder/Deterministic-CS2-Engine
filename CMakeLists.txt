@@ -5,7 +5,7 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose Debug or Release" FORCE)
 endif()
 
-project(marco LANGUAGES CXX)
+project(marco LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +31,7 @@ set(MARCO_COMMON_CORE_SOURCES
     src/core/runtime_config.cpp
     src/core/state_engine.cpp
     src/core/state_reconciliation.cpp
+    src/core/system_tray.cpp
     src/core/target_platform.cpp
     src/core/telemetry.cpp
     src/core/timer_lifecycle.cpp
@@ -52,13 +53,12 @@ target_compile_definitions(marco_build_options INTERFACE WIN32_LEAN_AND_MEAN)
 
 # Keep buffer security enabled.  In particular, never add /GS- to this project.
 if(MSVC)
-    target_compile_options(marco_build_options INTERFACE /W4 /permissive- /GS)
+    target_compile_options(marco_build_options INTERFACE
+        "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/GS>")
     target_link_options(marco_build_options INTERFACE /guard:cf)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(marco_build_options INTERFACE
-        -Wall -Wextra -Wpedantic
-        -fno-omit-frame-pointer -fstack-protector-strong
-        -ffunction-sections -fdata-sections
+        "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-fno-omit-frame-pointer;-fstack-protector-strong;-ffunction-sections;-fdata-sections>"
     )
     target_link_options(marco_build_options INTERFACE
         -Wl,--gc-sections -Wl,--dynamicbase -Wl,--nxcompat
@@ -66,14 +66,18 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # Headless daemon: Release has no console window, Debug keeps one for logs.
-add_executable(marco ${MARCO_COMMON_CORE_SOURCES})
+set_source_files_properties(resources/resource.rc PROPERTIES
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico;${CMAKE_CURRENT_SOURCE_DIR}/include/core/resource.h"
+)
+add_executable(marco ${MARCO_COMMON_CORE_SOURCES} resources/resource.rc)
+target_include_directories(marco PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 set_target_properties(marco PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release>)
 # Release intentionally omits diagnostics-only implementation units.
 target_sources(marco PRIVATE
     $<$<NOT:$<CONFIG:Release>>:${MARCO_DIAGNOSTIC_CORE_SOURCES}>
 )
 target_link_libraries(marco PRIVATE
-    marco_build_options user32 winmm ws2_32 avrt
+    marco_build_options user32 winmm ws2_32 avrt shell32
     $<$<NOT:$<CONFIG:Release>>:tdh>
     $<$<NOT:$<CONFIG:Release>>:dbghelp>
 )
@@ -124,6 +128,10 @@ function(marco_add_safe_test target)
         LABELS "safe"
     )
 endfunction()
+
+marco_add_safe_test(marco_test_system_tray
+    tests/unit/test_system_tray.cpp
+)
 
 marco_add_safe_test(marco_test_injection
     tests/unit/test_injection.cpp
@@ -242,6 +250,7 @@ add_custom_target(stress-safe
             --build-dir "$<TARGET_FILE_DIR:marco_test_injection>"
             --iterations "${MARCO_SAFE_STRESS_ITERATIONS}"
     DEPENDS
+        marco_test_system_tray
         marco_test_injection
         marco_test_physics
         marco_test_hybrid
@@ -263,6 +272,7 @@ add_custom_target(stress-safe
 add_custom_target(check
     COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
     DEPENDS
+        marco_test_system_tray
         marco_test_injection
         marco_test_physics
         marco_test_hybrid

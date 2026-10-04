@@ -1,3 +1,10 @@
+export enum EngineState {
+  Detached = 0,
+  Attached = 1,
+  ActiveTiming = 2,
+  FailSafe = 3,
+}
+
 export interface BrakeProfile {
   overlapDurationUs: number;
   brakeBiasMultiplier: number;
@@ -46,7 +53,7 @@ export interface RuntimeConfig {
 }
 
 export interface TelemetryData {
-  runtimeState: number;
+  runtimeState: EngineState;
   suspended: boolean;
   axisStateX: number;
   axisStateY: number;

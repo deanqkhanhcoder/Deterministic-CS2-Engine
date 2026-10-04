@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
-  Activity, Shield, ShieldAlert, Cpu, Zap, RefreshCw, Power, 
-  Crosshair, Sliders, Check, AlertCircle, Save, CheckCircle2
+  Activity, Shield, Zap, RefreshCw, Power,
+  Crosshair, Sliders, Check, Save
 } from 'lucide-react';
-import { RuntimeConfig, TelemetryData, BrakeProfile } from './types';
+import { RuntimeConfig, TelemetryData, BrakeProfile, EngineState } from './types';
 
 const DEFAULT_PORT = 47650;
 const PROFILE_NAMES = ['Disabled', 'Rifle (AK/M4)', 'Pistol (USP/Glock)', 'Sniper (AWP/Scout)', 'SMG (MP9/Mac10)'];
@@ -23,7 +23,7 @@ const DEFAULT_CONFIG: RuntimeConfig = {
     { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 35.0, accuracyThreshold: 34.0 },
     { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 25.0, accuracyThreshold: 34.0 },
     { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 40.0, accuracyThreshold: 17.0 },
-    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 20.0, accuracyThreshold: 34.0 }
+    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 25.0, accuracyThreshold: 34.0 }
   ]
 };
 
@@ -32,7 +32,7 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get('token') || localStorage.getItem('marco_token') || '';
   });
-  const [host, setHost] = useState<string>(() => {
+  const [host] = useState<string>(() => {
     return window.location.hostname ? `http://${window.location.hostname}:${DEFAULT_PORT}` : `http://127.0.0.1:${DEFAULT_PORT}`;
   });
 
@@ -44,7 +44,11 @@ export default function App() {
   const [saving, setSaving] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>('');
 
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const [pendingPower, setPendingPower] = useState<boolean | null>(null);
+  const powerPendingRef = useRef(false);
+  const configPendingRef = useRef(false);
+  const serverConfigRef = useRef<RuntimeConfig>(DEFAULT_CONFIG);
+  const configFetchId = useRef(0);
   const timelineCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Auto-fetch local token if missing
@@ -69,60 +73,86 @@ export default function App() {
     }
   }, [token]);
 
-  // Fetch initial config from daemon
-  const fetchConfig = async () => {
-    try {
-      const res = await fetch(`${host}/api/config`, {
-        headers: { 'X-Marco-Token': token }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setConfig(data);
-        if (data.activeBrakeProfileIndex >= 1 && data.activeBrakeProfileIndex <= 4) {
-          setSelectedProfileIndex(data.activeBrakeProfileIndex);
+  // Keep unsaved form edits when telemetry announces an unrelated state change.
+  const acceptConfig = (data: RuntimeConfig, replace = false) => {
+    const baseline = serverConfigRef.current;
+    setConfig(prev => {
+      if (replace || baseline.safeModeEnabled !== data.safeModeEnabled) return data;
+      const merged = { ...data };
+      for (const key of Object.keys(data) as (keyof RuntimeConfig)[]) {
+        if (key === 'brakeProfiles') {
+          merged.brakeProfiles = data.brakeProfiles.map((profile, index) => {
+            const next = { ...profile };
+            for (const field of Object.keys(profile) as (keyof BrakeProfile)[]) {
+              if (prev.brakeProfiles[index][field] !== baseline.brakeProfiles[index][field]) {
+                next[field] = prev.brakeProfiles[index][field];
+              }
+            }
+            return next;
+          });
+        } else if (key !== 'activeBrakeProfileIndex' && key !== 'safeModeEnabled' &&
+            JSON.stringify(prev[key]) !== JSON.stringify(baseline[key])) {
+          Object.assign(merged, { [key]: prev[key] });
         }
-        setConnected(true);
-      } else if (res.status === 401) {
-        setConnected(false);
       }
-    } catch {
-      setConnected(false);
-    }
+      return merged;
+    });
+    serverConfigRef.current = data;
+    setSelectedProfileIndex(data.activeBrakeProfileIndex);
+    setConnected(true);
   };
 
-  // Connect SSE for Realtime Telemetry (~30Hz)
+  const request = async (path: string, body?: unknown) => {
+    const res = await fetch(`${host}${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Marco-Token': token },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(5000)
+    });
+    const data = await res.json();
+    if (res.status === 401) {
+      localStorage.removeItem('marco_token');
+      setToken('');
+    }
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  };
+
+  const fetchConfig = async (replace = false) => {
+    const id = ++configFetchId.current;
+    const data: RuntimeConfig = await request('/api/config');
+    if (id === configFetchId.current && !configPendingRef.current) acceptConfig(data, replace);
+  };
+
   useEffect(() => {
-    fetchConfig();
-
-    const sseUrl = `${host}/api/events?token=${encodeURIComponent(token)}`;
-    const es = new EventSource(sseUrl);
-    eventSourceRef.current = es;
-
-    es.addEventListener('telemetry', (e) => {
+    if (!token) return;
+    let disposed = false;
+    fetchConfig().catch(() => { if (!disposed) setConnected(false); });
+    const es = new EventSource(`${host}/api/events?token=${encodeURIComponent(token)}`);
+    const onTelemetry = (e: MessageEvent) => {
+      if (disposed) return;
       try {
-        const data = JSON.parse(e.data);
+        const data: TelemetryData = JSON.parse(e.data);
         setTelemetry(data);
         setConnected(true);
-      } catch (err) {
-        console.error('SSE error', err);
+      } catch {
+        setStatusMsg('Invalid telemetry received from daemon');
       }
-    });
-
-    es.addEventListener('state_changed', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        setTelemetry(data);
-        fetchConfig();
-      } catch (err) {
-        console.error('SSE state change error', err);
-      }
-    });
-
-    es.onerror = () => {
-      setConnected(false);
     };
-
+    es.addEventListener('telemetry', onTelemetry);
+    es.addEventListener('state_changed', (e) => {
+      onTelemetry(e);
+      if (!configPendingRef.current) {
+        fetchConfig().catch(() => { if (!disposed) setConnected(false); });
+      }
+    });
+    es.onopen = () => {
+      if (!configPendingRef.current) fetchConfig().catch(() => setConnected(false));
+    };
+    es.onerror = () => { if (!disposed) setConnected(false); };
     return () => {
+      disposed = true;
+      ++configFetchId.current;
       es.close();
     };
   }, [host, token]);
@@ -150,7 +180,7 @@ export default function App() {
     const count = jitter.length;
     if (count === 0) return;
 
-    const step = width / (count - 1);
+    const step = count > 1 ? width / (count - 1) : 0;
     const maxVal = 200; // 200 us scale
 
     // Jitter (Cyan)
@@ -178,84 +208,78 @@ export default function App() {
     ctx.stroke();
   }, [telemetry]);
 
-  // Actions
-  const toggleSafeMode = async () => {
-    const nextVal = !config.safeModeEnabled;
+  // Serialize config mutations; SSE reads cannot overwrite optimistic updates.
+  const mutateConfig = async (path: string, body: unknown, message: string,
+                              optimistic?: RuntimeConfig, replace = true, committedProfile?: number) => {
+    if (configPendingRef.current) return;
+    const previous = config;
+    configPendingRef.current = true;
+    ++configFetchId.current;
+    setSaving(true);
+    if (optimistic) {
+      setConfig(optimistic);
+      setSelectedProfileIndex(optimistic.activeBrakeProfileIndex);
+    }
     try {
-      const res = await fetch(`${host}/api/safemode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Marco-Token': token },
-        body: JSON.stringify({ enabled: nextVal })
-      });
-      if (res.ok) {
-        setConfig(prev => ({ ...prev, safeModeEnabled: nextVal }));
-        setStatusMsg(`Safe Mode ${nextVal ? 'Activated (Clamped)' : 'Deactivated'}`);
+      const data: RuntimeConfig = await request(path, body);
+      if (committedProfile !== undefined) {
+        setConfig(prev => ({ ...prev, brakeProfiles: prev.brakeProfiles.map((profile, idx) =>
+          idx === committedProfile ? data.brakeProfiles[idx] : profile) }));
       }
+      acceptConfig(data, replace);
+      setStatusMsg(message);
     } catch (err) {
-      console.error(err);
+      setConfig(previous);
+      setSelectedProfileIndex(previous.activeBrakeProfileIndex);
+      setStatusMsg(err instanceof Error ? err.message : 'Failed to update configuration');
+    } finally {
+      configPendingRef.current = false;
+      setSaving(false);
+      fetchConfig().catch(() => setConnected(false));
     }
   };
 
-  const revertToSnapshot = async () => {
-    try {
-      const res = await fetch(`${host}/api/revert`, {
-        method: 'POST',
-        headers: { 'X-Marco-Token': token }
-      });
-      if (res.ok) {
-        await fetchConfig();
-        setStatusMsg('Configuration successfully reverted to pre-safemode snapshot.');
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const toggleSafeMode = () => mutateConfig('/api/safemode',
+    { enabled: !config.safeModeEnabled },
+    `Safe Mode ${config.safeModeEnabled ? 'Deactivated' : 'Activated (Clamped)'}`,
+    { ...config, safeModeEnabled: !config.safeModeEnabled });
 
-  const selectWeaponProfile = async (idx: number) => {
-    setSelectedProfileIndex(idx);
-    try {
-      const res = await fetch(`${host}/api/profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Marco-Token': token },
-        body: JSON.stringify({ index: idx })
-      });
-      if (res.ok) {
-        setConfig(prev => ({ ...prev, activeBrakeProfileIndex: idx }));
-        setStatusMsg(`Switched Weapon Profile: ${PROFILE_NAMES[idx]}`);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const revertToSnapshot = () => mutateConfig('/api/revert', {},
+    'Configuration successfully reverted to pre-safemode snapshot.');
+
+  const selectWeaponProfile = (idx: number) => mutateConfig('/api/config',
+    { activeProfileIndex: idx }, `Switched Weapon Profile: ${PROFILE_NAMES[idx]}`,
+    { ...config, activeBrakeProfileIndex: idx }, false);
+
+  const engineStopped = pendingPower ?? telemetry?.suspended ?? true;
+  const engineRunning = !engineStopped && connected && telemetry?.runtimeState !== EngineState.FailSafe;
 
   const toggleSuspend = async () => {
+    if (powerPendingRef.current) return;
+    const suspended = !engineStopped;
+    powerPendingRef.current = true;
+    setPendingPower(suspended);
     try {
-      await fetch(`${host}/api/suspend`, {
-        method: 'POST',
-        headers: { 'X-Marco-Token': token }
-      });
+      const data: TelemetryData = await request('/api/state', { suspended });
+      setTelemetry(data);
+      setStatusMsg(data.suspended ? 'Engine STOPPED' : 'Engine RUNNING');
     } catch (err) {
-      console.error(err);
+      setStatusMsg(err instanceof Error ? err.message : 'Failed to update engine state');
+    } finally {
+      powerPendingRef.current = false;
+      setPendingPower(null);
     }
   };
 
-  const saveConfig = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`${host}/api/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Marco-Token': token },
-        body: JSON.stringify(config)
-      });
-      if (res.ok) {
-        setStatusMsg('Configuration saved to marco.ini');
-      }
-    } catch (err) {
-      console.error(err);
-      setStatusMsg('Failed to save configuration');
-    } finally {
-      setSaving(false);
-    }
+  const saveConfig = () => mutateConfig('/api/config', config, 'Configuration saved to marco.ini');
+
+  const resetProfile = () => {
+    const next = { ...config, brakeProfiles: config.brakeProfiles.map((profile, idx) =>
+      idx === selectedProfileIndex ? { ...DEFAULT_CONFIG.brakeProfiles[idx] } : profile) };
+    // Send only this profile so other unsaved edits stay in the form.
+    void mutateConfig('/api/config', {
+      [`profile_${selectedProfileIndex}`]: next.brakeProfiles[selectedProfileIndex]
+    }, `Reset defaults: ${PROFILE_NAMES[selectedProfileIndex]}`, next, false, selectedProfileIndex);
   };
 
   const updateProfileField = (field: keyof BrakeProfile, val: number) => {
@@ -300,19 +324,23 @@ export default function App() {
           {/* Engine Power Toggle */}
           <button
             onClick={toggleSuspend}
+            aria-pressed={!engineStopped}
+            disabled={!connected || pendingPower !== null}
             className={`px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1.5 border transition ${
-              telemetry?.suspended 
+              !engineRunning
                 ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20' 
                 : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
             }`}
           >
-            <Power className="w-3 h-3" />
-            {telemetry?.suspended ? 'SUSPENDED' : 'RUNNING'}
+            <Power className={`w-3 h-3 ${engineRunning ? 'drop-shadow-[0_0_4px_currentColor]' : ''}`} />
+            {engineRunning ? 'RUNNING' : 'STOPPED'}
           </button>
 
           {/* Safe Mode Toggle */}
           <button
             onClick={toggleSafeMode}
+            aria-pressed={config.safeModeEnabled}
+            disabled={!connected || saving}
             className={`px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1.5 border transition ${
               config.safeModeEnabled 
                 ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20' 
@@ -326,6 +354,7 @@ export default function App() {
           {/* Revert Snapshot Button */}
           <button
             onClick={revertToSnapshot}
+            disabled={!connected || saving}
             title="Restore un-clamped snapshot configuration"
             className="px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1 bg-[#1b202e] hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
           >
@@ -555,12 +584,15 @@ export default function App() {
                 const isActive = config.activeBrakeProfileIndex === w.idx;
                 const isSelected = selectedProfileIndex === w.idx;
                 return (
-                  <div
+                  <button
+                    type="button"
+                    aria-pressed={isActive}
+                    disabled={!connected || saving}
                     key={w.idx}
                     onClick={() => selectWeaponProfile(w.idx)}
                     className={`p-3.5 rounded-lg border cursor-pointer transition ${
                       isActive 
-                        ? 'bg-cyan-500/10 border-cyan-500/50 text-slate-100' 
+                        ? 'bg-emerald-500/10 border-emerald-500/50 text-slate-100'
                         : isSelected
                           ? 'bg-[#181d2c] border-slate-600 text-slate-200'
                           : 'bg-[#121622] border-[#1b202e] text-slate-400 hover:border-slate-700'
@@ -569,17 +601,17 @@ export default function App() {
                     <div className="flex items-center justify-between">
                       <span className="font-mono font-bold text-sm tracking-wide">{w.name}</span>
                       {isActive && (
-                        <span className="text-[10px] font-mono text-cyan-400 font-bold flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-emerald-400 font-bold flex items-center gap-1">
                           <Check className="w-3 h-3" /> ACTIVE
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-1">{w.desc}</p>
                     <div className="flex justify-between items-center mt-3 text-[10px] font-mono text-slate-400">
-                      <span>Threshold: <strong className="text-slate-200">{w.threshold} u/s</strong></span>
+                      <span>Threshold: <strong className="text-slate-200">{config.brakeProfiles[w.idx].accuracyThreshold} u/s</strong></span>
                       <span>Brake: <strong className="text-cyan-400">{w.dur}</strong></span>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -599,14 +631,23 @@ export default function App() {
                   </p>
                 </div>
 
+                <div className="flex items-center gap-2">
+                <button
+                  onClick={resetProfile}
+                  disabled={!connected || saving}
+                  className="px-3.5 py-1.5 border border-slate-600 hover:bg-slate-700 text-slate-300 font-mono font-semibold text-xs rounded transition disabled:opacity-50"
+                >
+                  RESET DEFAULT
+                </button>
                 <button
                   onClick={saveConfig}
-                  disabled={saving}
+                  disabled={!connected || saving}
                   className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
                 >
                   <Save className="w-3.5 h-3.5" />
                   {saving ? 'SAVING...' : 'APPLY & SAVE (MARCO.INI)'}
                 </button>
+                </div>
               </div>
 
               {/* Sliders Grid */}
@@ -619,6 +660,7 @@ export default function App() {
                   </div>
                   <input
                     type="range"
+                    disabled={saving}
                     min="10"
                     max="60"
                     step="1"
@@ -640,6 +682,7 @@ export default function App() {
                   </div>
                   <input
                     type="range"
+                    disabled={saving}
                     min="0"
                     max="8000"
                     step="500"
@@ -660,6 +703,7 @@ export default function App() {
                   </div>
                   <input
                     type="range"
+                    disabled={saving}
                     min="0.80"
                     max="1.30"
                     step="0.01"
@@ -680,6 +724,7 @@ export default function App() {
                   </div>
                   <input
                     type="range"
+                    disabled={saving}
                     min="10"
                     max="60"
                     step="1"
@@ -708,7 +753,7 @@ export default function App() {
               </div>
               <button
                 onClick={saveConfig}
-                disabled={saving}
+                disabled={!connected || saving}
                 className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -765,6 +810,7 @@ export default function App() {
                   </div>
                   <input
                     type="range"
+                    disabled={saving}
                     min="100"
                     max="600"
                     step="10"
@@ -781,6 +827,7 @@ export default function App() {
                   </div>
                   <input
                     type="range"
+                    disabled={saving}
                     min="1"
                     max="10"
                     step="1"
@@ -806,7 +853,7 @@ export default function App() {
               </div>
               <button
                 onClick={saveConfig}
-                disabled={saving}
+                disabled={!connected || saving}
                 className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -822,6 +869,7 @@ export default function App() {
                 </div>
                 <input
                   type="range"
+                    disabled={saving}
                   min="2.0"
                   max="10.0"
                   step="0.1"
@@ -838,6 +886,7 @@ export default function App() {
                 </div>
                 <input
                   type="range"
+                    disabled={saving}
                   min="2.0"
                   max="10.0"
                   step="0.1"
@@ -854,6 +903,7 @@ export default function App() {
                 </div>
                 <input
                   type="range"
+                    disabled={saving}
                   min="40.0"
                   max="120.0"
                   step="1.0"
@@ -870,6 +920,7 @@ export default function App() {
                 </div>
                 <input
                   type="range"
+                    disabled={saving}
                   min="200.0"
                   max="300.0"
                   step="1.0"

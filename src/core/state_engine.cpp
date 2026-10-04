@@ -191,6 +191,9 @@ bool IsTimingWorkloadActive() {
 }
 
 void TakeSnapshot(RuntimeSnapshot& out) {
+    // REST handlers and the SSE worker share the cached metrics/timeline below.
+    static std::mutex snapshotMutex;
+    std::lock_guard<std::mutex> snapshotLock(snapshotMutex);
     EngineStatePublication pub;
     ReadPublishedEngineState(pub);
 

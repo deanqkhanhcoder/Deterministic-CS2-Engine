@@ -120,6 +120,7 @@ bool Load(RuntimeConfig& c) {
         c.brakeProfiles[i].brake_bias_multiplier = ReadDbl(section, L"BrakeBiasMultiplier", ReadDbl(section, L"TapStrengthMultiplier", c.brakeProfiles[i].brake_bias_multiplier));
         c.brakeProfiles[i].authority_bias_ms = ReadDbl(section, L"AuthorityBiasMs", c.brakeProfiles[i].authority_bias_ms);
         c.brakeProfiles[i].aggressiveness_curve = ReadDbl(section, L"AggressivenessCurve", ReadDbl(section, L"ReleaseCurveExponent", c.brakeProfiles[i].aggressiveness_curve));
+        c.brakeProfiles[i].momentum_memory_ms = ReadDbl(section, L"MomentumMemoryMs", c.brakeProfiles[i].momentum_memory_ms);
         c.brakeProfiles[i].accuracyThreshold = ReadDbl(section, L"AccuracyThreshold", c.brakeProfiles[i].accuracyThreshold);
     }
 
@@ -204,6 +205,7 @@ bool Save(const RuntimeConfig& c) {
         WriteDbl(section, L"BrakeBiasMultiplier", c.brakeProfiles[i].brake_bias_multiplier);
         WriteDbl(section, L"AuthorityBiasMs", c.brakeProfiles[i].authority_bias_ms);
         WriteDbl(section, L"AggressivenessCurve", c.brakeProfiles[i].aggressiveness_curve);
+        WriteDbl(section, L"MomentumMemoryMs", c.brakeProfiles[i].momentum_memory_ms);
         WriteDbl(section, L"AccuracyThreshold", c.brakeProfiles[i].accuracyThreshold);
     }
 

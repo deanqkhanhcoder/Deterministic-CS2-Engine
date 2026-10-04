@@ -67,7 +67,7 @@ Hardware Input (LL Hook)
 
 ### Prerequisites
 - Windows 10/11 x64
-- MinGW-w64 with C++20 support (`g++`)
+- MinGW-w64 with C++20 support (`g++`) and `windres` for the embedded icon
 - GNU Make (`mingw32-make`)
 - CMake 3.20+ (for test suite)
 - Node.js 18+ and npm (for Web UI)
@@ -84,7 +84,7 @@ mingw32-make debug
 ```
 
 ### 2. Run Test Suite
-Run the 18-test regression and integration suite:
+Run the 19-test regression and integration suite (including desktop-safe tray tests):
 
 ```powershell
 mingw32-make check
@@ -104,6 +104,22 @@ npm run dev       # Starts dev server on http://localhost:5173
 
 ---
 
+## System Tray
+
+Run `marco.exe` with `ui/dist/` available beside it. The Marco icon appears in the Windows notification area; check the hidden-icons arrow if Windows places it there.
+
+- Left-click the icon, or select **Open Dashboard**, to open `http://127.0.0.1:47650` in your default browser.
+- Right-click for **Open Dashboard**, **Toggle Engine (Active/Pause)**, and **Exit Marco**.
+- The toggle is checked while the engine is active. The tooltip shows **ACTIVE** or **PAUSED** and stays synchronized with Dashboard/keyboard changes.
+- Closing the browser keeps the daemon running. **Exit Marco** removes the icon and shuts down IPC, hooks, workers, timers, telemetry, and the single-instance mutex.
+- The icon returns after Windows Explorer restarts. Release and Debug embed the same multi-resolution `resources/icon.ico` via `resources/resource.rc`.
+
+The tray uses a hidden top-level Win32 window to receive Explorer's `TaskbarCreated` broadcast. Callback and menu handling follow the [Windows notification-area API](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar).
+
+To distribute a portable build, keep `marco.exe` and the entire `ui/dist/` directory together. `marco.ini` stores local user tuning; `marco.token` is regenerated per session. Both build systems compile the icon resource and link `shell32`.
+
+---
+
 ## Local IPC REST/SSE API
 
 The core daemon binds strictly to `127.0.0.1:47650`. On startup, a random 32-character hexadecimal token is generated and written to `./marco.token`. All API requests require the `X-Marco-Token` header or `?token=<token>` query parameter.
@@ -118,6 +134,7 @@ The core daemon binds strictly to `127.0.0.1:47650`. On startup, a random 32-cha
 | `/api/profile` | `POST` | Changes active weapon profile (`1`=Rifle, `2`=Pistol, `3`=Sniper, `4`=SMG) |
 | `/api/safemode` | `POST` | Toggles safe mode with automatic snapshot backup |
 | `/api/revert` | `POST` | Reverts current configuration to the pre-safemode snapshot |
+| `/api/state` | `POST` | Sets engine pause explicitly with `{ "suspended": true/false }`; returns telemetry |
 | `/api/suspend` | `POST` | Toggles engine input processing suspend state |
 | `/api/quit` | `POST` | Gracefully shuts down the background daemon |
 

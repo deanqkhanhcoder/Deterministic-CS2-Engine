@@ -120,9 +120,30 @@ npm run build
 cd ..
 ```
 
-### Chạy Unit & Integration Test Suite (18 tests)
+### Chạy Unit & Integration Test Suite (19 tests)
 ```powershell
 cmake -S . -B build/make-tests -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/make-tests --target check --parallel
 ```
-*Tất cả 18 test cases đều phải đạt 100% Passed.*
+*Tất cả 19 test cases đều phải đạt 100% Passed.*
+
+
+---
+
+## 6. System Tray & Đóng Gói Windows
+
+1. Chạy `marco.exe`: icon Marco xuất hiện trong System Tray (có thể nằm trong nhóm icon ẩn). Click trái hoặc chọn **Open Dashboard** để mở `http://127.0.0.1:47650` bằng trình duyệt mặc định.
+2. Click phải: **Open Dashboard**, **Toggle Engine (Active/Pause)**, **Exit Marco**. Dấu check thể hiện engine đang Active; tooltip chuyển giữa **ACTIVE** và **PAUSED** theo cả tray, Dashboard và hotkey.
+3. Đóng tab Dashboard không dừng daemon. **Exit Marco** dùng `WM_CLOSE` → `WM_DESTROY` → cleanup chung; gọi `NIM_DELETE`, chờ IPC/SSE/client workers, đóng Winsock, tháo hooks, dừng bhop/timer/telemetry, nhả synthetic keys còn giữ, khôi phục timer resolution, gỡ exception handler và giải phóng mutex.
+4. Khi Explorer restart, `TaskbarCreated` thêm lại icon. Cửa sổ `CS2MsgClass` phải là top-level ẩn, không dùng `HWND_MESSAGE` vì cửa sổ message-only không nhận broadcast này.
+5. Đóng gói portable gồm `marco.exe` và toàn bộ `ui/dist/`. `marco.ini` là cấu hình cá nhân; `marco.token` sinh lại mỗi phiên. `resources/resource.rc` và `resources/icon.ico` được compile bởi `windres` trong Makefile và RC language trong CMake; cả Release/Debug link `shell32` và có icon nhúng.
+
+### Các file và kiểm thử liên quan
+
+- `src/core/system_tray.cpp`, `include/core/system_tray.h`: quản lý `NOTIFYICONDATAW`, menu, callback và vòng đời icon; `include/core/resource.h` chứa ID resource/menu.
+- `src/core/main.cpp`: nối tray với message pump và cleanup; `WM_TOGGLE_SUSPEND` dùng chung cho tray, hotkey và IPC.
+- `src/core/ipc_server.cpp`: worker client có ownership và được chờ trước `WSACleanup`; listener chỉ đóng một lần; socket timeout và `SendMessageTimeoutW` tránh shutdown kẹt ở client.
+- `tests/unit/test_system_tray.cpp`: Win32 fakes kiểm tra click, menu, Active/Pause, Explorer restart, lỗi thêm icon/menu và cleanup idempotent; không mở trình duyệt hay phát input thật. Test nằm trong target `check` (19 tests).
+- `python tests/integration/test_ipc_dashboard.py`: kiểm thử daemon thật trong thư mục tạm khi port `47650` trống; xác nhận icon nhúng, tray Toggle/Exit (gồm client HTTP chưa gửi đủ body), SSE, Power, profile, SAFE MODE, snapshot, reset và lưu/đọc `MomentumMemoryMs`. Không thuộc suite desktop-safe vì khởi động daemon có hooks thật.
+
+`POST /api/state` nhận `{ "suspended": true/false }` và trả telemetry. `POST /api/config` nhận `activeProfileIndex` (alias của `activeBrakeProfileIndex`), mảng `brakeProfiles` 5 phần tử hoặc patch `profile_1`…`profile_4`. JSON telemetry SSE được xuất một dòng để mỗi sự kiện luôn parse được.

@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cctype>
+#include <future>
+#include <chrono>
 
 namespace ipc {
 
@@ -34,11 +36,11 @@ static std::thread       s_serverThread;
 static std::thread       s_sseThread;
 static HWND              s_msgHwnd = nullptr;
 static std::string       s_authToken;
-static SOCKET            s_listenSocket = INVALID_SOCKET;
 
 static std::mutex        s_sseClientsMutex;
 static std::vector<SOCKET> s_sseClients;
 static std::atomic<bool> s_stateChanged{false};
+static std::mutex s_apiMutex; // Serialize IPC read/apply/save transactions.
 
 // ── Token Generation & Storage ──
 static std::string GenerateToken() {
@@ -103,8 +105,11 @@ static bool ExtractBool(const std::string& json, const std::string& key, bool de
     if (pos == std::string::npos) return defaultVal;
     size_t vpos = json.find_first_not_of(" \t\r\n", pos + 1);
     if (vpos == std::string::npos) return defaultVal;
-    if (json.compare(vpos, 4, "true") == 0) return true;
-    if (json.compare(vpos, 5, "false") == 0) return false;
+    const auto endsValue = [&](size_t end) {
+        return end == json.size() || json.find_first_of(" \t\r\n,}]", end) == end;
+    };
+    if (json.compare(vpos, 4, "true") == 0 && endsValue(vpos + 4)) return true;
+    if (json.compare(vpos, 5, "false") == 0 && endsValue(vpos + 5)) return false;
     return defaultVal;
 }
 
@@ -275,10 +280,13 @@ static std::string SerializeTelemetry(const RuntimeSnapshot& snap) {
         ss << snap.timelineOversleep[i] << (i < RuntimeSnapshot::TIMELINE_SIZE - 1 ? "," : "");
     }
     ss << "]\n  }\n}";
-    return ss.str();
+    // SSE data must occupy one line; pretty JSON otherwise emits only "{".
+    std::string json = ss.str();
+    std::replace(json.begin(), json.end(), '\n', ' ');
+    return json;
 }
 
-static void UpdateConfigFromJson(RuntimeConfig& cfg, const std::string& body) {
+static bool UpdateConfigFromJson(RuntimeConfig& cfg, const std::string& body) {
     cfg.quickTapMs = ExtractInt(body, "quickTapMs", cfg.quickTapMs);
     cfg.maxScaleMs = ExtractInt(body, "maxScaleMs", cfg.maxScaleMs);
     cfg.crouchMult = ExtractDouble(body, "crouchMult", cfg.crouchMult);
@@ -304,7 +312,9 @@ static void UpdateConfigFromJson(RuntimeConfig& cfg, const std::string& body) {
     cfg.hardwareDebounceUs = ExtractInt(body, "hardwareDebounceUs", cfg.hardwareDebounceUs);
     cfg.humanizeMinUs = ExtractInt(body, "humanizeMinUs", cfg.humanizeMinUs);
     cfg.humanizeMaxUs = ExtractInt(body, "humanizeMaxUs", cfg.humanizeMaxUs);
-    cfg.activeBrakeProfileIndex = ExtractInt(body, "activeBrakeProfileIndex", cfg.activeBrakeProfileIndex);
+    cfg.activeBrakeProfileIndex = ExtractInt(body, "activeProfileIndex",
+        ExtractInt(body, "activeBrakeProfileIndex", cfg.activeBrakeProfileIndex));
+    if (cfg.activeBrakeProfileIndex < 1 || cfg.activeBrakeProfileIndex > 4) return false;
     cfg.safeModeEnabled = ExtractBool(body, "safeModeEnabled", cfg.safeModeEnabled);
     cfg.bhopEnabled = ExtractBool(body, "bhopEnabled", cfg.bhopEnabled);
     cfg.bhopMode = ExtractInt(body, "bhopMode", cfg.bhopMode);
@@ -314,22 +324,46 @@ static void UpdateConfigFromJson(RuntimeConfig& cfg, const std::string& body) {
     cfg.airborneLockMs = ExtractInt(body, "airborneLockMs", cfg.airborneLockMs);
     cfg.spamIntervalMs = ExtractInt(body, "spamIntervalMs", cfg.spamIntervalMs);
 
-    // Profile updates if provided
-    for (int i = 1; i <= 4; ++i) {
-        std::string pKey = "\"profile_" + std::to_string(i) + "\"";
-        size_t pPos = body.find(pKey);
-        if (pPos != std::string::npos) {
-            size_t endPos = body.find('}', pPos);
-            std::string sub = body.substr(pPos, endPos - pPos + 1);
-            auto& prof = cfg.brakeProfiles[i];
-            prof.overlap_duration_us = ExtractInt64(sub, "overlapDurationUs", prof.overlap_duration_us);
-            prof.brake_bias_multiplier = ExtractDouble(sub, "brakeBiasMultiplier", prof.brake_bias_multiplier);
-            prof.authority_bias_ms = ExtractDouble(sub, "authorityBiasMs", prof.authority_bias_ms);
-            prof.aggressiveness_curve = ExtractDouble(sub, "aggressivenessCurve", prof.aggressiveness_curve);
-            prof.momentum_memory_ms = ExtractDouble(sub, "momentumMemoryMs", prof.momentum_memory_ms);
-            prof.accuracyThreshold = ExtractDouble(sub, "accuracyThreshold", prof.accuracyThreshold);
+    // The UI sends the same five-element brakeProfiles array returned by GET.
+    // Keep profile_N patches for older clients and single-profile resets.
+    std::vector<std::string> profiles;
+    const size_t arrayKey = body.find("\"brakeProfiles\"");
+    if (arrayKey != std::string::npos) {
+        size_t pos = body.find(':', arrayKey);
+        pos = body.find_first_not_of(" \t\r\n", pos + 1);
+        if (pos == std::string::npos || body[pos] != '[') return false;
+        for (int i = 0; i < 5; ++i) {
+            pos = body.find_first_not_of(" \t\r\n", pos + 1);
+            if (pos == std::string::npos || body[pos] != '{') return false;
+            size_t end = body.find('}', pos);
+            if (end == std::string::npos) return false;
+            profiles.push_back(body.substr(pos, end - pos + 1));
+            pos = body.find_first_not_of(" \t\r\n", end + 1);
+            if (pos == std::string::npos || body[pos] != (i < 4 ? ',' : ']')) return false;
         }
     }
+    for (int i = 1; i <= 4; ++i) {
+        std::string sub;
+        if (!profiles.empty()) sub = profiles[i];
+        const size_t key = body.find("\"profile_" + std::to_string(i) + "\"");
+        if (key != std::string::npos) {
+            size_t pos = body.find(':', key);
+            pos = body.find_first_not_of(" \t\r\n", pos + 1);
+            if (pos == std::string::npos || body[pos] != '{') return false;
+            size_t end = body.find('}', pos);
+            if (end == std::string::npos) return false;
+            sub = body.substr(pos, end - pos + 1);
+        }
+        if (sub.empty()) continue;
+        auto& prof = cfg.brakeProfiles[i];
+        prof.overlap_duration_us = ExtractInt64(sub, "overlapDurationUs", prof.overlap_duration_us);
+        prof.brake_bias_multiplier = ExtractDouble(sub, "brakeBiasMultiplier", prof.brake_bias_multiplier);
+        prof.authority_bias_ms = ExtractDouble(sub, "authorityBiasMs", prof.authority_bias_ms);
+        prof.aggressiveness_curve = ExtractDouble(sub, "aggressivenessCurve", prof.aggressiveness_curve);
+        prof.momentum_memory_ms = ExtractDouble(sub, "momentumMemoryMs", prof.momentum_memory_ms);
+        prof.accuracyThreshold = ExtractDouble(sub, "accuracyThreshold", prof.accuracyThreshold);
+    }
+    return true;
 }
 
 // ── HTTP Protocol Handling ──
@@ -423,6 +457,11 @@ static void ServeStaticFile(SOCKET s, const std::string& path) {
 }
 
 static void HandleClient(SOCKET clientSock) {
+    const DWORD timeoutMs = 5000;
+    setsockopt(clientSock, SOL_SOCKET, SO_SNDTIMEO,
+               reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    setsockopt(clientSock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
     char buf[8192] = {0};
     int received = recv(clientSock, buf, sizeof(buf) - 1, 0);
     if (received <= 0) {
@@ -430,6 +469,37 @@ static void HandleClient(SOCKET clientSock) {
         return;
     }
     std::string req(buf, received);
+    size_t headerEnd = req.find("\r\n\r\n");
+    while (headerEnd == std::string::npos && req.size() < 16384 && s_running.load()) {
+        received = recv(clientSock, buf, sizeof(buf), 0);
+        if (received <= 0) { closesocket(clientSock); return; }
+        req.append(buf, received);
+        headerEnd = req.find("\r\n\r\n");
+    }
+    if (headerEnd == std::string::npos || !s_running.load()) { closesocket(clientSock); return; }
+    std::string headers = req.substr(0, headerEnd);
+    std::transform(headers.begin(), headers.end(), headers.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const size_t lengthPos = headers.find("\r\ncontent-length:");
+    size_t contentLength = 0;
+    if (lengthPos != std::string::npos) {
+        try {
+            contentLength = std::stoul(headers.substr(lengthPos + 17));
+        } catch (...) {
+            SendResponse(clientSock, 400, "Bad Request", "application/json", "{\"error\":\"Invalid Content-Length\"}");
+            closesocket(clientSock); return;
+        }
+    }
+    if (contentLength > 65536) {
+        SendResponse(clientSock, 413, "Payload Too Large", "application/json", "{\"error\":\"Request too large\"}");
+        closesocket(clientSock); return;
+    }
+    while (req.size() - headerEnd - 4 < contentLength && s_running.load()) {
+        received = recv(clientSock, buf, sizeof(buf), 0);
+        if (received <= 0) { closesocket(clientSock); return; }
+        req.append(buf, received);
+    }
+    if (!s_running.load()) { closesocket(clientSock); return; }
     std::istringstream stream(req);
     std::string method, rawPath, protocol;
     stream >> method >> rawPath >> protocol;
@@ -455,7 +525,7 @@ static void HandleClient(SOCKET clientSock) {
     std::string body;
     size_t bodyPos = req.find("\r\n\r\n");
     if (bodyPos != std::string::npos) {
-        body = req.substr(bodyPos + 4);
+        body = req.substr(bodyPos + 4, contentLength);
     }
 
     if (method == "GET" && pathOnly == "/api/token") {
@@ -464,16 +534,28 @@ static void HandleClient(SOCKET clientSock) {
         return;
     }
 
+    std::lock_guard<std::mutex> apiLock(s_apiMutex);
+    if (!s_running.load(std::memory_order_acquire)) {
+        SendResponse(clientSock, 503, "Service Unavailable", "application/json", "{\"error\":\"Daemon shutting down\"}");
+        closesocket(clientSock);
+        return;
+    }
     if (method == "GET" && pathOnly == "/api/config") {
         RuntimeConfig cfg = rcfg::GetUserConfig();
         SendResponse(clientSock, 200, "OK", "application/json", SerializeConfig(cfg));
         closesocket(clientSock);
     } else if (method == "POST" && pathOnly == "/api/config") {
         RuntimeConfig cfg = rcfg::GetUserConfig();
-        UpdateConfigFromJson(cfg, body);
-        rcfg::Apply(cfg);
-        config_io::Save(cfg);
-        SendResponse(clientSock, 200, "OK", "application/json", "{\"status\":\"ok\"}");
+        if (!UpdateConfigFromJson(cfg, body)) {
+            SendResponse(clientSock, 400, "Bad Request", "application/json", "{\"error\":\"Invalid profile payload\"}");
+        } else {
+            rcfg::Apply(cfg);
+            cfg = rcfg::GetUserConfig();
+            const bool saved = config_io::Save(cfg);
+            NotifyStateChanged();
+            SendResponse(clientSock, saved ? 200 : 500, saved ? "OK" : "Internal Server Error",
+                "application/json", saved ? SerializeConfig(cfg) : "{\"error\":\"Applied in memory, but failed to save marco.ini\"}");
+        }
         closesocket(clientSock);
     } else if (method == "GET" && pathOnly == "/api/telemetry") {
         RuntimeSnapshot snap{};
@@ -504,13 +586,14 @@ static void HandleClient(SOCKET clientSock) {
     } else if (method == "POST" && pathOnly == "/api/safemode") {
         bool enable = ExtractBool(body, "enabled", false);
         rcfg::SetSafeMode(enable);
-        std::string resp = std::string("{\"status\":\"ok\",\"safeMode\":") + (enable ? "true" : "false") + "}";
-        SendResponse(clientSock, 200, "OK", "application/json", resp);
+        NotifyStateChanged();
+        SendResponse(clientSock, 200, "OK", "application/json", SerializeConfig(rcfg::GetUserConfig()));
         closesocket(clientSock);
     } else if (method == "POST" && pathOnly == "/api/revert") {
         bool reverted = rcfg::RevertToSnapshot();
-        std::string resp = std::string("{\"status\":\"ok\",\"reverted\":") + (reverted ? "true" : "false") + "}";
-        SendResponse(clientSock, 200, "OK", "application/json", resp);
+        NotifyStateChanged();
+        SendResponse(clientSock, reverted ? 200 : 409, reverted ? "OK" : "Conflict", "application/json",
+                     reverted ? SerializeConfig(rcfg::GetUserConfig()) : "{\"error\":\"No snapshot available\"}");
         closesocket(clientSock);
     } else if (method == "POST" && pathOnly == "/api/profile") {
         int idx = ExtractInt(body, "index", 1);
@@ -524,8 +607,31 @@ static void HandleClient(SOCKET clientSock) {
             SendResponse(clientSock, 400, "Bad Request", "application/json", "{\"error\":\"Invalid profile index\"}");
         }
         closesocket(clientSock);
-    } else if (method == "POST" && pathOnly == "/api/suspend") {
-        engine::ToggleSuspend();
+    } else if (method == "POST" && (pathOnly == "/api/state" || pathOnly == "/api/suspend")) {
+        const bool validState = ExtractBool(body, "suspended", false) == ExtractBool(body, "suspended", true);
+        if (pathOnly == "/api/state" && !validState) {
+            SendResponse(clientSock, 400, "Bad Request", "application/json", "{\"error\":\"suspended must be boolean\"}");
+            closesocket(clientSock);
+            return;
+        }
+        const bool desired = ExtractBool(body, "suspended", !engine::IsSuspended());
+        // Run on the engine's message thread, including bhop suspension cleanup.
+        if (desired != engine::IsSuspended() && s_msgHwnd) {
+            DWORD_PTR result = 0;
+            if (!SendMessageTimeoutW(s_msgHwnd, WM_TOGGLE_SUSPEND, 0, 0,
+                                     SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &result)) {
+                SendResponse(clientSock, 503, "Service Unavailable", "application/json", "{\"error\":\"Engine message thread unavailable\"}");
+                closesocket(clientSock);
+                return;
+            }
+        }
+        if (pathOnly == "/api/state") {
+            RuntimeSnapshot snap{};
+            engine::TakeSnapshot(snap);
+            SendResponse(clientSock, 200, "OK", "application/json", SerializeTelemetry(snap));
+            closesocket(clientSock);
+            return;
+        }
         std::string resp = std::string("{\"status\":\"ok\",\"suspended\":") + (engine::IsSuspended() ? "true" : "false") + "}";
         SendResponse(clientSock, 200, "OK", "application/json", resp);
         closesocket(clientSock);
@@ -596,61 +702,69 @@ static void ServerWorker(uint16_t port) {
         return;
     }
 
-    s_listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s_listenSocket == INVALID_SOCKET) {
+    const SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listenSocket == INVALID_SOCKET) {
         DLOG_ERR(Runtime, "Failed to create IPC listen socket");
         WSACleanup();
         return;
     }
 
     BOOL opt = TRUE;
-    setsockopt(s_listenSocket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
+    setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
 
     sockaddr_in service{};
     service.sin_family = AF_INET;
     service.sin_addr.s_addr = inet_addr("127.0.0.1"); // Loopback only
     service.sin_port = htons(port);
 
-    if (bind(s_listenSocket, reinterpret_cast<SOCKADDR*>(&service), sizeof(service)) == SOCKET_ERROR) {
+    if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&service), sizeof(service)) == SOCKET_ERROR) {
         DLOG_ERR(Runtime, "IPC bind failed on port %u", port);
-        closesocket(s_listenSocket);
+        closesocket(listenSocket);
         WSACleanup();
         return;
     }
 
-    if (listen(s_listenSocket, SOMAXCONN) == SOCKET_ERROR) {
+    if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
         DLOG_ERR(Runtime, "IPC listen failed");
-        closesocket(s_listenSocket);
+        closesocket(listenSocket);
         WSACleanup();
         return;
     }
 
     DLOG_INFO(Runtime, "IPC Server listening on http://127.0.0.1:%u", port);
 
+    std::vector<std::future<void>> clients;
     while (s_running.load(std::memory_order_relaxed)) {
         fd_set readSet;
         FD_ZERO(&readSet);
-        FD_SET(s_listenSocket, &readSet);
+        FD_SET(listenSocket, &readSet);
 
         timeval tv{};
         tv.tv_sec = 0;
         tv.tv_usec = 200000; // 200ms timeout for graceful shutdown check
 
         int sel = select(0, &readSet, nullptr, nullptr, &tv);
-        if (sel > 0 && FD_ISSET(s_listenSocket, &readSet)) {
-            SOCKET clientSock = accept(s_listenSocket, nullptr, nullptr);
+        if (sel > 0 && FD_ISSET(listenSocket, &readSet)) {
+            SOCKET clientSock = accept(listenSocket, nullptr, nullptr);
             if (clientSock != INVALID_SOCKET) {
-                // Handle client in lightweight detached thread to not block server
-                std::thread([clientSock]() {
-                    HandleClient(clientSock);
-                }).detach();
+                // Reap completed handlers; retain ownership of every live worker.
+                for (auto it = clients.begin(); it != clients.end();) {
+                    if (it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                        it->get();
+                        it = clients.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                clients.push_back(std::async(std::launch::async, HandleClient, clientSock));
             }
         }
     }
 
-    closesocket(s_listenSocket);
-    s_listenSocket = INVALID_SOCKET;
+    closesocket(listenSocket);
+    for (auto& client : clients) client.get();
 
+    if (s_sseThread.joinable()) s_sseThread.join();
     {
         std::lock_guard<std::mutex> lock(s_sseClientsMutex);
         for (SOCKET s : s_sseClients) {
@@ -678,17 +792,11 @@ bool StartServer(uint16_t port, HWND msgHwnd) {
 void StopServer() {
     if (!s_running.exchange(false, std::memory_order_acq_rel)) return;
 
-    if (s_listenSocket != INVALID_SOCKET) {
-        closesocket(s_listenSocket);
-        s_listenSocket = INVALID_SOCKET;
-    }
-
     if (s_serverThread.joinable()) {
         s_serverThread.join();
     }
-    if (s_sseThread.joinable()) {
-        s_sseThread.join();
-    }
+    // Also cover WSAStartup/bind/listen failures before normal worker cleanup.
+    if (s_sseThread.joinable()) s_sseThread.join();
 
     RemoveTokenFile();
     DLOG_INFO(Shutdown, "IPC Server stopped");

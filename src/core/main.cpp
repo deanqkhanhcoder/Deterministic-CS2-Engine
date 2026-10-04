@@ -20,6 +20,8 @@
 #include "input_capture.h"
 #include "bhop.h"
 #include "ipc_server.h"
+#include "system_tray.h"
+#include "resource.h"
 
 #include "runtime_config.h"
 #include "config_io.h"
@@ -98,9 +100,9 @@ static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
 
 
 // ── Main window procedure for the hidden message window ──
-// This receives timer-thread messages and hotkey commands.
-// The UI window (ui_main) handles its own WndProc separately.
+// This receives timer/hook messages, hotkeys, tray commands and Explorer broadcasts.
 static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (tray::HandleMessage(hwnd, msg, wParam, lParam)) return 0;
 #if MARCO_ENABLE_HEARTBEATS
 
 #endif
@@ -109,6 +111,7 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             engine::ToggleSuspend();
             if (engine::IsSuspended()) bhop::OnSpaceUp();
             bhop::OnSuspendChanged();
+            tray::Update(engine::IsSuspended());
             ipc::NotifyStateChanged();
             DLOG_WARN(Runtime, "Suspend: %s", (engine::IsSuspended() ? "ON" : "OFF"));
             return 0;
@@ -137,6 +140,7 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
         case WM_STATE_DIRTY: {
             engine::ClearStateDirty();
+            tray::Update(engine::IsSuspended());
             ipc::NotifyStateChanged();
             return 0;
         }
@@ -185,6 +189,7 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             return 0;
 
         case WM_DESTROY:
+            tray::Shutdown();
             PostQuitMessage(0);
             return 0;
     }
@@ -197,7 +202,7 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     // â”€â”€ Crash handler â”€â”€
-    AddVectoredExceptionHandler(1, CrashVectoredExceptionHandler);
+    PVOID crashHandler = AddVectoredExceptionHandler(1, CrashVectoredExceptionHandler);
     SAFE_STARTUP_TRACE("MUTEX_CHECK");
 
     // â”€â”€ Prevent multiple instances â”€â”€
@@ -205,11 +210,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     if (mutex == nullptr) {
         MessageBoxW(nullptr, L"Failed to create the single-instance mutex.",
                     L"Error", MB_ICONERROR);
+        if (crashHandler) RemoveVectoredExceptionHandler(crashHandler);
         return 1;
     }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr, L"CS2 Macro Suite is already running.", L"Error", MB_ICONERROR);
         CloseHandle(mutex);
+        if (crashHandler) RemoveVectoredExceptionHandler(crashHandler);
         return 1;
     }
 
@@ -276,11 +283,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = MsgWndProc;
     wc.hInstance      = hInst;
+    wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_MARCO));
+    wc.hIconSm = wc.hIcon;
     wc.lpszClassName  = L"CS2MsgClass";
     RegisterClassExW(&wc);
 
     HWND msgHwnd = CreateWindowExW(0, L"CS2MsgClass", L"CS2Msg",
-        0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, hInst, nullptr);
+        0, 0, 0, 0, 0, nullptr, nullptr, hInst, nullptr);
 
     if (!msgHwnd) {
         MessageBoxW(nullptr, L"Failed to create message window.", L"Error", MB_ICONERROR);
@@ -295,6 +304,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         RestoreTimerResolution();
         ReleaseMutex(mutex);
         CloseHandle(mutex);
+        if (crashHandler) RemoveVectoredExceptionHandler(crashHandler);
         return 1;
     }
 
@@ -333,6 +343,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         DestroyWindow(msgHwnd);
         ReleaseMutex(mutex);
         CloseHandle(mutex);
+        if (crashHandler) RemoveVectoredExceptionHandler(crashHandler);
         return 1;
     }
     engine::SetHookInstalled(true);
@@ -345,6 +356,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     etw::StartGlobalTrace();
     DLOG_INFO(Runtime, "TRACE: etw::StartGlobalTrace OK");
 #endif
+
+    if (!tray::Init(msgHwnd, hInst, engine::IsSuspended())) {
+        DLOG_WARN(Startup, "Tray unavailable; open http://127.0.0.1:47650 manually");
+    }
 
     SAFE_STARTUP_TRACE("MESSAGE_LOOP");
     DLOG_INFO(Runtime, "CS2 Macro Suite initialized");
@@ -413,6 +428,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     //  CLEANUP
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     DLOG_INFO(Shutdown, "Shutting down...");
+    tray::Shutdown();
     
     // Stop all producers before the final fail-safe release.
     const auto shutdownTarget = target_platform::GetCurrentIdentity();
@@ -445,6 +461,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                  static_cast<int64_t>(pendingReleases));
     }
 
+    // Release owned keys before waiting on slow HTTP clients.
+    // Stop IPC readers before destroying telemetry/target subsystems.
+    ipc::StopServer();
+
     // [FIX R-5] Shutdown order critical to avoid races
     telemetry::StopTelemetryThread();
     target_platform::Shutdown();
@@ -456,9 +476,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     etw::StopGlobalTrace();
 #endif
     
-    // Safe to call Get() now - all threads stopped
-    ipc::StopServer();
-    RuntimeConfig finalCfg = rcfg::Get();
+    // Save user tuning rather than the temporary Safe Mode overlay.
+    RuntimeConfig finalCfg = rcfg::GetUserConfig();
     config_io::Save(finalCfg);
 
     if (!dlog::Flush()) {
@@ -467,7 +486,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
     dlog::Shutdown();
     RestoreTimerResolution();
+    if (IsWindow(msgHwnd)) DestroyWindow(msgHwnd);
+    UnregisterClassW(L"CS2MsgClass", hInst);
     if (mutex) { ReleaseMutex(mutex); CloseHandle(mutex); }
 
+    if (crashHandler) RemoveVectoredExceptionHandler(crashHandler);
     return 0;
 }
