@@ -14,7 +14,9 @@ Operating as a headless background daemon with a local loopback IPC REST/SSE ser
 - **Exact Valve Physics Simulation**:
   - Sequential physics order: runs friction reduction followed by active opposite acceleration.
   - Zero-overlap counter-strafe: eliminates overlapping conflicting keys (overlap = 0 µs) to ensure maximum deceleration per tick.
+  - Diagonal counter-strafe normalization: scales component velocity by $1/\sqrt{2} \approx 0.707$ and trims 1 tick (~15.6 ms) of excess brake hold to eliminate over-counter-strafe and reverse recoil jerk.
   - Directional momentum memory across rapid A-D strafes.
+- **Handover Documentation**: See [`docs/HANDOVER_CONTEXT.md`](file:///c:/Users/toanpq/Desktop/marco/docs/HANDOVER_CONTEXT.md) for full architectural blueprints, mathematical specifications, and historical bug resolutions for incoming engineers/AI agents.
 - **Safe Mode with Snapshot Reversion**: Entering Safe Mode applies temporary clamp overlays without destroying user settings. Exiting or triggering Revert to Snapshot instantly restores the pre-safemode configuration.
 - **Microsecond Precision Hybrid Timing**: Utilizes `timeBeginPeriod(1)` and high-resolution hardware counters (`QPC`/`QPF`) paired with spin-wait loops (`_mm_pause`) for microsecond key release accuracy.
 - **Two Lean Build Targets**: Directly outputs `./marco.exe` (Release) and `./marco_debug.exe` (Debug) at the workspace root.

@@ -77,6 +77,12 @@ struct RuntimeSnapshot {
     uint32_t  failSafeTriggers;
     uint32_t  recoveryCount;
 
+    // Tactical Telemetry HUD metrics
+    double    currentSpeed;
+    int64_t   lastBrakeUs;
+    double    lastPreSpeed;
+    char      lastBrakeResult[16];
+
     // Rolling timeline graphs
     static constexpr int TIMELINE_SIZE = 120;
     int64_t   timelineJitter[TIMELINE_SIZE];

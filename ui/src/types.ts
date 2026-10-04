@@ -50,6 +50,14 @@ export interface TelemetryData {
   suspended: boolean;
   axisStateX: number;
   axisStateY: number;
+  hud?: {
+    currentSpeed: number;
+    lastBrakeUs: number;
+    lastBrakeMs: number;
+    lastBrakeTicks: number;
+    lastPreSpeed: number;
+    lastResult: string;
+  };
   keys: {
     phys: [boolean, boolean, boolean, boolean];
     logical: [boolean, boolean, boolean, boolean];

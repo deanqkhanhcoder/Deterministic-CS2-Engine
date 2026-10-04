@@ -217,6 +217,14 @@ static std::string SerializeTelemetry(const RuntimeSnapshot& snap) {
        << "  \"suspended\": " << (snap.suspended ? "true" : "false") << ",\n"
        << "  \"axisStateX\": " << static_cast<int>(snap.axisState[0]) << ",\n"
        << "  \"axisStateY\": " << static_cast<int>(snap.axisState[1]) << ",\n"
+       << "  \"hud\": {\n"
+       << "    \"currentSpeed\": " << snap.currentSpeed << ",\n"
+       << "    \"lastBrakeUs\": " << snap.lastBrakeUs << ",\n"
+       << "    \"lastBrakeMs\": " << (snap.lastBrakeUs / 1000) << ",\n"
+       << "    \"lastBrakeTicks\": " << (snap.lastBrakeUs / 15625) << ",\n"
+       << "    \"lastPreSpeed\": " << snap.lastPreSpeed << ",\n"
+       << "    \"lastResult\": \"" << snap.lastBrakeResult << "\"\n"
+       << "  },\n"
        << "  \"keys\": {\n"
        << "    \"phys\": [" << snap.phys[0] << "," << snap.phys[1] << "," << snap.phys[2] << "," << snap.phys[3] << "],\n"
        << "    \"logical\": [" << snap.logical[0] << "," << snap.logical[1] << "," << snap.logical[2] << "," << snap.logical[3] << "]\n"
@@ -352,8 +360,8 @@ static void SendCorsHeaders(SOCKET s) {
 }
 
 static bool CheckAuth(const std::string& req, const std::string& path) {
-    // Static web files don't require auth token to initially fetch
-    if (path == "/" || path == "/index.html" || path.rfind("/assets/", 0) == 0 ||
+    // Static web files and local token bootstrap don't require auth token
+    if (path == "/api/token" || path == "/" || path == "/index.html" || path.rfind("/assets/", 0) == 0 ||
         path.rfind("/vite.svg", 0) == 0 || path.rfind("/favicon", 0) == 0) {
         return true;
     }
@@ -448,6 +456,12 @@ static void HandleClient(SOCKET clientSock) {
     size_t bodyPos = req.find("\r\n\r\n");
     if (bodyPos != std::string::npos) {
         body = req.substr(bodyPos + 4);
+    }
+
+    if (method == "GET" && pathOnly == "/api/token") {
+        SendResponse(clientSock, 200, "OK", "application/json", "{\"token\":\"" + s_authToken + "\"}");
+        closesocket(clientSock);
+        return;
     }
 
     if (method == "GET" && pathOnly == "/api/config") {

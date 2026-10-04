@@ -1,12 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Activity, Shield, ShieldAlert, Cpu, Zap, RefreshCw, Power, 
-  Crosshair, Sliders, CheckCircle, AlertTriangle, KeyRound
+  Crosshair, Sliders, Check, AlertCircle, Save, CheckCircle2
 } from 'lucide-react';
 import { RuntimeConfig, TelemetryData, BrakeProfile } from './types';
 
 const DEFAULT_PORT = 47650;
 const PROFILE_NAMES = ['Disabled', 'Rifle (AK/M4)', 'Pistol (USP/Glock)', 'Sniper (AWP/Scout)', 'SMG (MP9/Mac10)'];
+
+const DEFAULT_CONFIG: RuntimeConfig = {
+  quickTapMs: 30, maxScaleMs: 80, crouchMult: 0.75, latencyMarginMs: 6, minStopMs: 4, lutMaxMs: 350,
+  walkMemoryMs: 130, walkRatioSkip: 0.65, walkRatioLight: 0.35, minWalkStopMs: 15, walkMaxStopMs: 22,
+  decayK: 0.005, dirChangePenaltyMs: 60, tapSpamWindowMs: 60, stopStrengthMin: 0.25,
+  tapSpamAlpha: 0.15, tapSpamHalfLifeMs: 150, minTapUs: 2500,
+  physMaxSpeed: 250.0, physFriction: 5.2, physStopSpeed: 80.0, physAccelerate: 5.5,
+  hardwareDebounceUs: 2000, humanizeMinUs: 0, humanizeMaxUs: 0,
+  activeBrakeProfileIndex: 1, safeModeEnabled: false,
+  bhopEnabled: false, bhopMode: 4, airborneDelayMs: 350, scrollBurstGapMs: 2,
+  landingScanMs: 450, airborneLockMs: 350, spamIntervalMs: 2,
+  brakeProfiles: [
+    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 40.0, accuracyThreshold: 34.0 },
+    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 35.0, accuracyThreshold: 34.0 },
+    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 25.0, accuracyThreshold: 34.0 },
+    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 40.0, accuracyThreshold: 17.0 },
+    { overlapDurationUs: 0, brakeBiasMultiplier: 1.0, authorityBiasMs: 0.0, aggressivenessCurve: 1.0, momentumMemoryMs: 20.0, accuracyThreshold: 34.0 }
+  ]
+};
 
 export default function App() {
   const [token, setToken] = useState<string>(() => {
@@ -18,7 +37,7 @@ export default function App() {
   });
 
   const [connected, setConnected] = useState<boolean>(false);
-  const [config, setConfig] = useState<RuntimeConfig | null>(null);
+  const [config, setConfig] = useState<RuntimeConfig>(DEFAULT_CONFIG);
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [selectedProfileIndex, setSelectedProfileIndex] = useState<number>(1);
   const [activeTab, setActiveTab] = useState<'telemetry' | 'profiles' | 'bhop' | 'physics'>('telemetry');
@@ -28,14 +47,29 @@ export default function App() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const timelineCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Sync token to localStorage and URL
+  // Auto-fetch local token if missing
+  useEffect(() => {
+    if (!token) {
+      fetch(`${host}/api/token`)
+        .then(res => res.json())
+        .then(data => {
+          if (data?.token) {
+            setToken(data.token);
+            localStorage.setItem('marco_token', data.token);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [host, token]);
+
+  // Sync token to localStorage
   useEffect(() => {
     if (token) {
       localStorage.setItem('marco_token', token);
     }
   }, [token]);
 
-  // Fetch initial config
+  // Fetch initial config from daemon
   const fetchConfig = async () => {
     try {
       const res = await fetch(`${host}/api/config`, {
@@ -44,11 +78,12 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setConfig(data);
-        setSelectedProfileIndex(data.activeBrakeProfileIndex || 1);
+        if (data.activeBrakeProfileIndex >= 1 && data.activeBrakeProfileIndex <= 4) {
+          setSelectedProfileIndex(data.activeBrakeProfileIndex);
+        }
         setConnected(true);
       } else if (res.status === 401) {
         setConnected(false);
-        setStatusMsg('Auth failed: invalid token');
       }
     } catch {
       setConnected(false);
@@ -57,8 +92,6 @@ export default function App() {
 
   // Connect SSE for Realtime Telemetry (~30Hz)
   useEffect(() => {
-    if (!token && window.location.port !== `${DEFAULT_PORT}`) return;
-
     fetchConfig();
 
     const sseUrl = `${host}/api/events?token=${encodeURIComponent(token)}`;
@@ -71,7 +104,7 @@ export default function App() {
         setTelemetry(data);
         setConnected(true);
       } catch (err) {
-        console.error('SSE telemetry parse err', err);
+        console.error('SSE error', err);
       }
     });
 
@@ -81,7 +114,7 @@ export default function App() {
         setTelemetry(data);
         fetchConfig();
       } catch (err) {
-        console.error('SSE state err', err);
+        console.error('SSE state change error', err);
       }
     });
 
@@ -94,7 +127,7 @@ export default function App() {
     };
   }, [host, token]);
 
-  // Draw real-time timeline graph on Canvas
+  // Draw real-time timeline graph
   useEffect(() => {
     const canvas = timelineCanvasRef.current;
     if (!canvas || !telemetry?.timeline) return;
@@ -104,7 +137,6 @@ export default function App() {
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
 
-    // Draw background grid lines
     ctx.strokeStyle = '#1e2433';
     ctx.lineWidth = 1;
     for (let y = 0; y < height; y += 25) {
@@ -121,9 +153,9 @@ export default function App() {
     const step = width / (count - 1);
     const maxVal = 200; // 200 us scale
 
-    // Jitter Line (Cyan)
-    ctx.strokeStyle = '#06b6d4';
-    ctx.lineWidth = 2;
+    // Jitter (Cyan)
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < count; i++) {
       const val = Math.min(jitter[i] / 10, maxVal);
@@ -133,9 +165,9 @@ export default function App() {
     }
     ctx.stroke();
 
-    // Oversleep Line (Amber)
+    // Oversleep (Amber)
     ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
     for (let i = 0; i < count; i++) {
       const val = Math.min(oversleep[i] / 10, maxVal);
@@ -148,7 +180,6 @@ export default function App() {
 
   // Actions
   const toggleSafeMode = async () => {
-    if (!config) return;
     const nextVal = !config.safeModeEnabled;
     try {
       const res = await fetch(`${host}/api/safemode`, {
@@ -157,8 +188,8 @@ export default function App() {
         body: JSON.stringify({ enabled: nextVal })
       });
       if (res.ok) {
-        setConfig(prev => prev ? { ...prev, safeModeEnabled: nextVal } : null);
-        setStatusMsg(`Safe Mode ${nextVal ? 'Activated' : 'Deactivated'}`);
+        setConfig(prev => ({ ...prev, safeModeEnabled: nextVal }));
+        setStatusMsg(`Safe Mode ${nextVal ? 'Activated (Clamped)' : 'Deactivated'}`);
       }
     } catch (err) {
       console.error(err);
@@ -173,7 +204,7 @@ export default function App() {
       });
       if (res.ok) {
         await fetchConfig();
-        setStatusMsg('Successfully reverted to pre-safemode configuration snapshot!');
+        setStatusMsg('Configuration successfully reverted to pre-safemode snapshot.');
       }
     } catch (err) {
       console.error(err);
@@ -181,6 +212,7 @@ export default function App() {
   };
 
   const selectWeaponProfile = async (idx: number) => {
+    setSelectedProfileIndex(idx);
     try {
       const res = await fetch(`${host}/api/profile`, {
         method: 'POST',
@@ -188,9 +220,8 @@ export default function App() {
         body: JSON.stringify({ index: idx })
       });
       if (res.ok) {
-        setSelectedProfileIndex(idx);
-        setConfig(prev => prev ? { ...prev, activeBrakeProfileIndex: idx } : null);
-        setStatusMsg(`Switched weapon profile to: ${PROFILE_NAMES[idx]}`);
+        setConfig(prev => ({ ...prev, activeBrakeProfileIndex: idx }));
+        setStatusMsg(`Switched Weapon Profile: ${PROFILE_NAMES[idx]}`);
       }
     } catch (err) {
       console.error(err);
@@ -209,7 +240,6 @@ export default function App() {
   };
 
   const saveConfig = async () => {
-    if (!config) return;
     setSaving(true);
     try {
       const res = await fetch(`${host}/api/config`, {
@@ -218,7 +248,7 @@ export default function App() {
         body: JSON.stringify(config)
       });
       if (res.ok) {
-        setStatusMsg('Configuration saved successfully to marco.ini');
+        setStatusMsg('Configuration saved to marco.ini');
       }
     } catch (err) {
       console.error(err);
@@ -228,8 +258,7 @@ export default function App() {
     }
   };
 
-  const updateCurrentProfileField = (field: keyof BrakeProfile, val: number) => {
-    if (!config) return;
+  const updateProfileField = (field: keyof BrakeProfile, val: number) => {
     const profiles = [...config.brakeProfiles];
     profiles[selectedProfileIndex] = {
       ...profiles[selectedProfileIndex],
@@ -238,127 +267,95 @@ export default function App() {
     setConfig({ ...config, brakeProfiles: profiles });
   };
 
+  const activeWeapon = config.brakeProfiles[selectedProfileIndex] || config.brakeProfiles[1];
+  const curSpeed = telemetry?.hud?.currentSpeed ?? 0.0;
+  const lastBrakeMs = telemetry?.hud?.lastBrakeMs ?? 0;
+  const lastBrakeTicks = telemetry?.hud?.lastBrakeTicks ?? 0;
+  const lastResult = telemetry?.hud?.lastResult ?? 'FINE';
+
   return (
-    <div className="min-h-screen bg-[#090a0f] text-slate-100 flex flex-col">
-      {/* ── Top Header Navigation ── */}
-      <header className="border-b border-[#1e2433] bg-[#11141c]/80 backdrop-blur px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
+    <div className="min-h-screen bg-[#0c0e14] text-slate-200 flex flex-col font-sans selection:bg-cyan-500/20">
+      {/* ── Precision Utility Header ── */}
+      <header className="border-b border-[#1b202e] bg-[#121622] px-5 py-2.5 flex items-center justify-between gap-4 sticky top-0 z-50">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black">
-            M
+          <div className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-mono font-bold text-xs tracking-wider">
+            MARCO
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold tracking-wider text-base">MARCO ENGINE</span>
-              <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-medium border border-amber-500/30">
-                v27.7 HEADLESS
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 font-mono">Deterministic Sub-Tick Motion Service</p>
-          </div>
+          <span className="text-xs font-mono font-semibold tracking-wide text-slate-300">
+            DETERMINISTIC CS2 MOTION ENGINE
+          </span>
+          <span className="text-[11px] text-slate-500 font-mono">v27.8</span>
         </div>
 
-        {/* Global Controls & Status */}
-        <div className="flex items-center gap-3">
-          {/* Target CS2 Focus Indicator */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#090a0f] border border-[#1e2433] text-xs font-mono">
-            <span className={`w-2 h-2 rounded-full ${telemetry?.targetActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-            <span className="text-slate-300">
+        {/* Global Action Bar */}
+        <div className="flex items-center gap-2.5">
+          {/* CS2 Target Status */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0c0e14] border border-[#1b202e] text-[11px] font-mono">
+            <span className={`w-2 h-2 rounded-full ${telemetry?.targetActive ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+            <span className={telemetry?.targetActive ? 'text-slate-200 font-medium' : 'text-slate-500'}>
               {telemetry?.targetName || 'CS2 Process'}
             </span>
           </div>
 
-          {/* Suspend Toggle */}
+          {/* Engine Power Toggle */}
           <button
             onClick={toggleSuspend}
-            className={`px-3 py-1.5 rounded-md text-xs font-mono font-semibold flex items-center gap-1.5 border transition ${
+            className={`px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1.5 border transition ${
               telemetry?.suspended 
-                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30' 
-                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20' 
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
             }`}
           >
-            <Power className="w-3.5 h-3.5" />
-            {telemetry?.suspended ? 'SUSPENDED' : 'ACTIVE'}
+            <Power className="w-3 h-3" />
+            {telemetry?.suspended ? 'SUSPENDED' : 'RUNNING'}
           </button>
 
           {/* Safe Mode Toggle */}
           <button
             onClick={toggleSafeMode}
-            className={`px-3 py-1.5 rounded-md text-xs font-mono font-semibold flex items-center gap-1.5 border transition ${
-              config?.safeModeEnabled 
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30' 
-                : 'bg-[#1e2433] text-slate-400 border-transparent hover:text-slate-200'
+            className={`px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1.5 border transition ${
+              config.safeModeEnabled 
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20' 
+                : 'bg-[#1b202e] text-slate-400 border-transparent hover:text-slate-200'
             }`}
           >
-            <Shield className="w-3.5 h-3.5" />
-            SAFE MODE {config?.safeModeEnabled ? 'ON' : 'OFF'}
+            <Shield className="w-3 h-3" />
+            SAFE MODE: {config.safeModeEnabled ? 'ON' : 'OFF'}
           </button>
 
-          {/* Emergency Snapshot Revert Button */}
+          {/* Revert Snapshot Button */}
           <button
             onClick={revertToSnapshot}
-            title="Restore un-overridden configuration snapshot"
-            className="px-3 py-1.5 rounded-md text-xs font-mono font-semibold flex items-center gap-1.5 bg-[#1e2433] hover:bg-slate-700 text-slate-300 border border-slate-600 transition"
+            title="Restore un-clamped snapshot configuration"
+            className="px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1 bg-[#1b202e] hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
           >
-            <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
+            <RefreshCw className="w-3 h-3 text-cyan-400" />
             REVERT SNAPSHOT
           </button>
 
-          {/* Connection Status Indicator */}
-          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
-            <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-rose-500 animate-ping'}`} />
-            <span className="text-xs font-mono text-slate-400">
-              {connected ? 'CONNECTED' : 'DISCONNECTED'}
-            </span>
+          {/* Connection Pill */}
+          <div className="flex items-center gap-1.5 pl-2 border-l border-[#1b202e] text-[11px] font-mono text-slate-400">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+            <span>127.0.0.1:{DEFAULT_PORT}</span>
           </div>
         </div>
       </header>
 
-      {/* ── Status Toast / Banner ── */}
+      {/* ── Status Toast ── */}
       {statusMsg && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-2 text-xs font-mono text-amber-300 flex items-center justify-between">
+        <div className="bg-cyan-500/10 border-b border-cyan-500/20 px-5 py-1.5 text-xs font-mono text-cyan-300 flex items-center justify-between">
           <span>{statusMsg}</span>
           <button onClick={() => setStatusMsg('')} className="text-slate-400 hover:text-white">✕</button>
         </div>
       )}
 
-      {/* ── Token Authentication Bar (when disconnected) ── */}
-      {!connected && (
-        <div className="bg-[#11141c] border-b border-rose-500/30 px-6 py-3 flex items-center gap-4 text-xs font-mono">
-          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-          <span className="text-slate-300">IPC Daemon Connection:</span>
-          <input
-            type="text"
-            placeholder="Daemon URL"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            className="bg-[#090a0f] border border-[#1e2433] rounded px-2.5 py-1 text-slate-200 w-64 focus:outline-none focus:border-cyan-500"
-          />
-          <div className="flex items-center gap-2">
-            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-            <input
-              type="text"
-              placeholder="Paste token from ./marco.token"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              className="bg-[#090a0f] border border-[#1e2433] rounded px-2.5 py-1 text-slate-200 w-72 focus:outline-none focus:border-amber-500"
-            />
-          </div>
-          <button 
-            onClick={fetchConfig}
-            className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-medium transition"
-          >
-            Connect
-          </button>
-        </div>
-      )}
-
-      {/* ── Navigation Tabs ── */}
-      <div className="border-b border-[#1e2433] bg-[#0d0f17] px-6 flex gap-6">
+      {/* ── Tab Bar ── */}
+      <div className="border-b border-[#1b202e] bg-[#0f121a] px-5 flex gap-4">
         {[
-          { id: 'telemetry', label: 'TELEMETRY & PHYSICS', icon: Activity },
+          { id: 'telemetry', label: 'TELEMETRY HUD', icon: Activity },
           { id: 'profiles', label: 'WEAPON PROFILES & TUNING', icon: Crosshair },
           { id: 'bhop', label: 'BUNNYHOP AUTOMATION', icon: Zap },
-          { id: 'physics', label: 'SUB-TICK ENGINE PARAMS', icon: Sliders }
+          { id: 'physics', label: 'PHYSICS PARAMETERS', icon: Sliders }
         ].map(tab => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
@@ -366,10 +363,10 @@ export default function App() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`py-3 text-xs font-mono font-semibold flex items-center gap-2 border-b-2 transition ${
+              className={`py-2.5 text-xs font-mono font-semibold flex items-center gap-2 border-b-2 transition ${
                 active 
-                  ? 'border-amber-400 text-amber-400' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  ? 'border-cyan-400 text-cyan-400' 
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
@@ -379,349 +376,364 @@ export default function App() {
         })}
       </div>
 
-      {/* ── Main Workspace Content ── */}
-      <main className="p-6 flex-1 max-w-7xl mx-auto w-full space-y-6">
-        {/* ══ Tab 1: Telemetry & Physics Visualizer ══ */}
+      {/* ── Main Utility Container ── */}
+      <main className="p-5 flex-1 max-w-7xl mx-auto w-full space-y-5">
+        
+        {/* ════ TAB 1: TELEMETRY HUD ════ */}
         {activeTab === 'telemetry' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Movement Key State Sub-tick Visualizer */}
-            <div className="bg-[#11141c] border border-[#1e2433] rounded-xl p-5 flex flex-col justify-between">
-              <div>
-                <h3 className="text-xs font-mono font-bold text-slate-400 tracking-wider mb-4 flex items-center justify-between">
-                  <span>SUB-TICK KEY RECONSTRUCTION</span>
-                  <span className="text-[10px] text-cyan-400 font-normal">PHYSICAL vs LOGICAL</span>
-                </h3>
-
-                {/* Key Grid Layout */}
-                <div className="grid grid-cols-3 gap-3 max-w-[240px] mx-auto my-4">
-                  <div />
-                  {/* W Key */}
-                  <div className={`p-3 rounded-lg border text-center font-mono transition ${
-                    telemetry?.keys.phys[0] 
-                      ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold shadow-lg shadow-cyan-500/20' 
-                      : telemetry?.keys.logical[0]
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                        : 'bg-[#090a0f] border-[#1e2433] text-slate-500'
-                  }`}>
-                    <div className="text-sm">W</div>
-                    <div className="text-[9px] uppercase tracking-tighter">
-                      {telemetry?.keys.phys[0] ? 'PHYS' : telemetry?.keys.logical[0] ? 'BRAKE' : 'IDLE'}
-                    </div>
-                  </div>
-                  <div />
-
-                  {/* A Key */}
-                  <div className={`p-3 rounded-lg border text-center font-mono transition ${
-                    telemetry?.keys.phys[2] 
-                      ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold shadow-lg shadow-cyan-500/20' 
-                      : telemetry?.keys.logical[2]
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                        : 'bg-[#090a0f] border-[#1e2433] text-slate-500'
-                  }`}>
-                    <div className="text-sm">A</div>
-                    <div className="text-[9px] uppercase tracking-tighter">
-                      {telemetry?.keys.phys[2] ? 'PHYS' : telemetry?.keys.logical[2] ? 'BRAKE' : 'IDLE'}
-                    </div>
-                  </div>
-
-                  {/* S Key */}
-                  <div className={`p-3 rounded-lg border text-center font-mono transition ${
-                    telemetry?.keys.phys[1] 
-                      ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold shadow-lg shadow-cyan-500/20' 
-                      : telemetry?.keys.logical[1]
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                        : 'bg-[#090a0f] border-[#1e2433] text-slate-500'
-                  }`}>
-                    <div className="text-sm">S</div>
-                    <div className="text-[9px] uppercase tracking-tighter">
-                      {telemetry?.keys.phys[1] ? 'PHYS' : telemetry?.keys.logical[1] ? 'BRAKE' : 'IDLE'}
-                    </div>
-                  </div>
-
-                  {/* D Key */}
-                  <div className={`p-3 rounded-lg border text-center font-mono transition ${
-                    telemetry?.keys.phys[3] 
-                      ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold shadow-lg shadow-cyan-500/20' 
-                      : telemetry?.keys.logical[3]
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-300'
-                        : 'bg-[#090a0f] border-[#1e2433] text-slate-500'
-                  }`}>
-                    <div className="text-sm">D</div>
-                    <div className="text-[9px] uppercase tracking-tighter">
-                      {telemetry?.keys.phys[3] ? 'PHYS' : telemetry?.keys.logical[3] ? 'BRAKE' : 'IDLE'}
-                    </div>
-                  </div>
+          <div className="space-y-4">
+            {/* Top Stat Gauges */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 font-mono">
+              {/* Realtime Velocity */}
+              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
+                <div className="text-[11px] text-slate-400 uppercase tracking-wider">Realtime Velocity</div>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className={`text-2xl font-bold tracking-tight ${curSpeed <= 34.0 ? 'text-emerald-400' : curSpeed <= 150.0 ? 'text-amber-400' : 'text-slate-100'}`}>
+                    {curSpeed.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-slate-500">u/s</span>
+                  {curSpeed <= 34.0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 ml-auto">
+                      ACCURATE
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {/* Axis States */}
-              <div className="border-t border-[#1e2433] pt-4 space-y-2 font-mono text-xs">
-                <div className="flex justify-between items-center text-slate-400">
-                  <span>Strafe Axis (X):</span>
-                  <span className="font-semibold text-slate-200">
-                    {telemetry?.axisStateX === 1 ? 'RIGHT (D)' : telemetry?.axisStateX === 2 ? 'LEFT (A)' : telemetry?.axisStateX === 3 ? 'CONFLICT' : 'NEUTRAL'}
+              {/* Last Counter-Strafe Result */}
+              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
+                <div className="text-[11px] text-slate-400 uppercase tracking-wider">Brake Result</div>
+                <div className="flex items-center justify-between mt-1">
+                  <span className={`text-xl font-bold tracking-tight ${
+                    lastResult === 'FINE' ? 'text-emerald-400' : lastResult === 'EARLY' ? 'text-rose-400' : 'text-amber-400'
+                  }`}>
+                    {lastResult}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    Pre: {telemetry?.hud?.lastPreSpeed?.toFixed(0) || '215'} u/s
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-slate-400">
-                  <span>Forward Axis (Y):</span>
-                  <span className="font-semibold text-slate-200">
-                    {telemetry?.axisStateY === 1 ? 'FORWARD (W)' : telemetry?.axisStateY === 2 ? 'BACK (S)' : telemetry?.axisStateY === 3 ? 'CONFLICT' : 'NEUTRAL'}
+              </div>
+
+              {/* Last Brake Duration */}
+              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
+                <div className="text-[11px] text-slate-400 uppercase tracking-wider">Last Brake Hold</div>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-bold text-cyan-300 tracking-tight">
+                    {lastBrakeMs || 93}
                   </span>
+                  <span className="text-xs text-slate-500">ms ({lastBrakeTicks || 6} ticks)</span>
+                </div>
+              </div>
+
+              {/* Timer Jitter & CPU Core */}
+              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-3.5">
+                <div className="text-[11px] text-slate-400 uppercase tracking-wider">QPC Timer Jitter</div>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-bold text-cyan-300 tracking-tight">
+                    {telemetry?.metrics?.timerJitterUs || 0}
+                  </span>
+                  <span className="text-xs text-slate-500">µs (Core #{telemetry?.affinity?.timingCore ?? 0})</span>
                 </div>
               </div>
             </div>
 
-            {/* Performance & Jitter Meters */}
-            <div className="bg-[#11141c] border border-[#1e2433] rounded-xl p-5 lg:col-span-2 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xs font-mono font-bold text-slate-400 tracking-wider">
-                    MICROSECOND PRECISION TELEMETRY
-                  </h3>
-                  <div className="flex items-center gap-4 text-xs font-mono">
-                    <span className="flex items-center gap-1.5 text-cyan-400">
-                      <span className="w-2 h-2 rounded-full bg-cyan-400" /> Jitter (p50)
-                    </span>
-                    <span className="flex items-center gap-1.5 text-amber-400">
-                      <span className="w-2 h-2 rounded-full bg-amber-400" /> Oversleep
-                    </span>
+            {/* Sub-Tick Visualizer & Rolling Graph */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Sub-Tick Tick Timeline & Key Matrix */}
+              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-4 space-y-4">
+                <div className="flex items-center justify-between border-b border-[#1b202e] pb-2">
+                  <span className="text-xs font-mono font-bold text-slate-300">SUB-TICK TIMELINE</span>
+                  <span className="text-[10px] font-mono text-cyan-400">64-TICK ENGINE STEP</span>
+                </div>
+
+                {/* Tick Visualization Blocks */}
+                <div className="space-y-1.5 font-mono text-[11px]">
+                  <div className="flex justify-between text-slate-400 text-[10px]">
+                    <span>T0: Release</span>
+                    <span>T1-T6: Counter-Accel</span>
+                    <span>T7: Settle (&lt;34 u/s)</span>
+                  </div>
+                  <div className="grid grid-cols-8 gap-1 h-5">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(tick => {
+                      const isBrakeActive = tick <= (lastBrakeTicks || 6);
+                      const isComplete = tick === 7;
+                      return (
+                        <div
+                          key={tick}
+                          className={`rounded border flex items-center justify-center text-[10px] font-bold ${
+                            isComplete 
+                              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                              : isBrakeActive
+                                ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                                : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
+                          }`}
+                        >
+                          T{tick}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Live Real-time Canvas Graph */}
-                <div className="bg-[#090a0f] border border-[#1e2433] rounded-lg p-2 h-44 mb-4">
-                  <canvas ref={timelineCanvasRef} width={600} height={160} className="w-full h-full" />
+                {/* Movement Key State Matrix */}
+                <div className="border-t border-[#1b202e] pt-3">
+                  <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex justify-between">
+                    <span>KEY ROUTER MATRIX</span>
+                    <span className="text-[10px] text-slate-500">PHYS vs SYNTHETIC</span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 max-w-[200px] mx-auto">
+                    <div />
+                    <div className={`p-2 rounded border text-center font-mono ${
+                      telemetry?.keys?.phys[0] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
+                      telemetry?.keys?.logical[0] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
+                    }`}>
+                      W
+                    </div>
+                    <div />
+
+                    <div className={`p-2 rounded border text-center font-mono ${
+                      telemetry?.keys?.phys[2] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
+                      telemetry?.keys?.logical[2] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
+                    }`}>
+                      A
+                    </div>
+                    <div className={`p-2 rounded border text-center font-mono ${
+                      telemetry?.keys?.phys[1] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
+                      telemetry?.keys?.logical[1] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
+                    }`}>
+                      S
+                    </div>
+                    <div className={`p-2 rounded border text-center font-mono ${
+                      telemetry?.keys?.phys[3] ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 font-bold' :
+                      telemetry?.keys?.logical[3] ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-[#0c0e14] border-[#1b202e] text-slate-600'
+                    }`}>
+                      D
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Real-time Hardware Metrics Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono">
-                <div className="bg-[#090a0f] p-3 rounded-lg border border-[#1e2433]">
-                  <div className="text-[10px] text-slate-400 uppercase">Hook Latency p50</div>
-                  <div className="text-lg font-bold text-cyan-300 mt-1">
-                    {telemetry?.metrics.hookLatencyP50Us || 0} <span className="text-xs font-normal text-slate-500">µs</span>
+              {/* Real-time Canvas Graph */}
+              <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-4 lg:col-span-2 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between border-b border-[#1b202e] pb-2 mb-3">
+                    <span className="text-xs font-mono font-bold text-slate-300">REALTIME QPC JITTER & OVERSLEEP TRACE</span>
+                    <div className="flex items-center gap-3 text-[11px] font-mono">
+                      <span className="text-cyan-400">■ Jitter (µs)</span>
+                      <span className="text-amber-400">■ Oversleep (µs)</span>
+                    </div>
+                  </div>
+                  <div className="bg-[#0c0e14] border border-[#1b202e] rounded p-2 h-44">
+                    <canvas ref={timelineCanvasRef} width={600} height={160} className="w-full h-full" />
                   </div>
                 </div>
 
-                <div className="bg-[#090a0f] p-3 rounded-lg border border-[#1e2433]">
-                  <div className="text-[10px] text-slate-400 uppercase">Timer Jitter</div>
-                  <div className="text-lg font-bold text-cyan-300 mt-1">
-                    {telemetry?.metrics.timerJitterUs || 0} <span className="text-xs font-normal text-slate-500">µs</span>
-                  </div>
-                </div>
-
-                <div className="bg-[#090a0f] p-3 rounded-lg border border-[#1e2433]">
-                  <div className="text-[10px] text-slate-400 uppercase">Wake Oversleep</div>
-                  <div className="text-lg font-bold text-amber-300 mt-1">
-                    {telemetry?.metrics.wakeOversleepUs || 0} <span className="text-xs font-normal text-slate-500">µs</span>
-                  </div>
-                </div>
-
-                <div className="bg-[#090a0f] p-3 rounded-lg border border-[#1e2433]">
-                  <div className="text-[10px] text-slate-400 uppercase">CPU Core Affinity</div>
-                  <div className="text-sm font-bold text-emerald-400 mt-1 flex items-center gap-1">
-                    <Cpu className="w-3.5 h-3.5" />
-                    Core #{telemetry?.affinity.timingCore || 0}
-                  </div>
+                <div className="grid grid-cols-4 gap-2 font-mono text-[11px] mt-3 border-t border-[#1b202e] pt-3 text-slate-400">
+                  <div>Hook P50: <span className="text-slate-200 font-semibold">{telemetry?.metrics?.hookLatencyP50Us || 0} µs</span></div>
+                  <div>Hook P99: <span className="text-slate-200 font-semibold">{telemetry?.metrics?.hookLatencyP99Us || 0} µs</span></div>
+                  <div>Wake Oversleep: <span className="text-amber-400 font-semibold">{telemetry?.metrics?.wakeOversleepUs || 0} µs</span></div>
+                  <div>Spin Duration: <span className="text-cyan-400 font-semibold">{telemetry?.metrics?.spinDurationUs || 0} µs</span></div>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* ══ Tab 2: Weapon Profiles & Tuning ══ */}
+        {/* ════ TAB 2: WEAPON PROFILES & TUNING ════ */}
         {activeTab === 'profiles' && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {/* Weapon Selector Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { idx: 1, name: 'RIFLE', desc: 'AK-47 / M4A4 / M4A1-S', threshold: '34 u/s' },
-                { idx: 2, name: 'PISTOL', desc: 'USP-S / Glock / Deagle', threshold: '34 u/s' },
-                { idx: 3, name: 'SNIPER', desc: 'AWP / SSG 08', threshold: '17 u/s' },
-                { idx: 4, name: 'SMG', desc: 'MP9 / MAC-10 / MP7', threshold: '34 u/s' }
+                { idx: 1, name: 'RIFLE', desc: 'AK-47 / M4A4 / M4A1-S', threshold: 34.0, dur: '109 ms' },
+                { idx: 2, name: 'PISTOL', desc: 'USP-S / Glock / Deagle', threshold: 34.0, dur: '109 ms' },
+                { idx: 3, name: 'SNIPER', desc: 'AWP / SSG 08', threshold: 17.0, dur: '125 ms' },
+                { idx: 4, name: 'SMG', desc: 'MP9 / MAC-10 / MP7', threshold: 34.0, dur: '109 ms' }
               ].map(w => {
-                const isActive = (config?.activeBrakeProfileIndex || 1) === w.idx;
+                const isActive = config.activeBrakeProfileIndex === w.idx;
                 const isSelected = selectedProfileIndex === w.idx;
                 return (
                   <div
                     key={w.idx}
-                    onClick={() => {
-                      setSelectedProfileIndex(w.idx);
-                      selectWeaponProfile(w.idx);
-                    }}
-                    className={`p-4 rounded-xl border cursor-pointer transition relative ${
+                    onClick={() => selectWeaponProfile(w.idx)}
+                    className={`p-3.5 rounded-lg border cursor-pointer transition ${
                       isActive 
-                        ? 'bg-amber-500/10 border-amber-500/60 shadow-lg shadow-amber-500/10' 
+                        ? 'bg-cyan-500/10 border-cyan-500/50 text-slate-100' 
                         : isSelected
-                          ? 'bg-slate-800/50 border-cyan-500/50'
-                          : 'bg-[#11141c] border-[#1e2433] hover:border-slate-700'
+                          ? 'bg-[#181d2c] border-slate-600 text-slate-200'
+                          : 'bg-[#121622] border-[#1b202e] text-slate-400 hover:border-slate-700'
                     }`}
                   >
-                    {isActive && (
-                      <div className="absolute top-3 right-3 flex items-center gap-1 text-[10px] font-mono text-amber-400">
-                        <CheckCircle className="w-3.5 h-3.5" /> ACTIVE
-                      </div>
-                    )}
-                    <div className="text-base font-bold font-mono text-slate-100">{w.name}</div>
-                    <div className="text-xs text-slate-400 mt-1">{w.desc}</div>
-                    <div className="text-[10px] font-mono text-cyan-400 mt-3">Accuracy Threshold: {w.threshold}</div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-sm tracking-wide">{w.name}</span>
+                      {isActive && (
+                        <span className="text-[10px] font-mono text-cyan-400 font-bold flex items-center gap-1">
+                          <Check className="w-3 h-3" /> ACTIVE
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">{w.desc}</p>
+                    <div className="flex justify-between items-center mt-3 text-[10px] font-mono text-slate-400">
+                      <span>Threshold: <strong className="text-slate-200">{w.threshold} u/s</strong></span>
+                      <span>Brake: <strong className="text-cyan-400">{w.dur}</strong></span>
+                    </div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Profile Tuner Sliders */}
-            {config?.brakeProfiles[selectedProfileIndex] && (
-              <div className="bg-[#11141c] border border-[#1e2433] rounded-xl p-6 space-y-6">
-                <div className="flex items-center justify-between border-b border-[#1e2433] pb-4">
-                  <div>
-                    <h3 className="text-sm font-mono font-bold text-slate-200">
-                      TUNING PROFILE: {PROFILE_NAMES[selectedProfileIndex]}
-                    </h3>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">
-                      Adjust exact physical deceleration parameters in real-time
-                    </p>
+            {/* Profile Detail Tuner */}
+            <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-5 space-y-5">
+              <div className="flex items-center justify-between border-b border-[#1b202e] pb-3">
+                <div>
+                  <div className="text-sm font-mono font-bold text-slate-200 flex items-center gap-2">
+                    <span>EDITING PROFILE: {PROFILE_NAMES[selectedProfileIndex]}</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-[#1b202e] text-cyan-400 font-mono">
+                      Target Accuracy: &le; {activeWeapon.accuracyThreshold.toFixed(1)} u/s
+                    </span>
                   </div>
-                  <button
-                    onClick={saveConfig}
-                    disabled={saving}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-mono font-bold text-xs rounded-lg transition"
-                  >
-                    {saving ? 'SAVING...' : 'SAVE TO MARCO.INI'}
-                  </button>
+                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    Sub-tick deceleration simulation parameters aligned with Valve PM_Friction / Accelerate
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs">
-                  {/* Accuracy Threshold Slider */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-slate-300">Accuracy Threshold (Stop Speed):</span>
-                      <span className="text-amber-400 font-bold">
-                        {config.brakeProfiles[selectedProfileIndex].accuracyThreshold.toFixed(1)} u/s
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="10"
-                      max="60"
-                      step="1"
-                      value={config.brakeProfiles[selectedProfileIndex].accuracyThreshold}
-                      onChange={(e) => updateCurrentProfileField('accuracyThreshold', parseFloat(e.target.value))}
-                      className="w-full accent-amber-500"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Rifle standard is 34.0 u/s (Sniper: 17.0 u/s). Simulation terminates when velocity drops below this.
-                    </p>
-                  </div>
+                <button
+                  onClick={saveConfig}
+                  disabled={saving}
+                  className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {saving ? 'SAVING...' : 'APPLY & SAVE (MARCO.INI)'}
+                </button>
+              </div>
 
-                  {/* Overlap Duration (Must be 0us) */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-slate-300">Key Overlap Window:</span>
-                      <span className="text-cyan-400 font-bold">
-                        {config.brakeProfiles[selectedProfileIndex].overlapDurationUs} µs
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="10000"
-                      step="500"
-                      value={config.brakeProfiles[selectedProfileIndex].overlapDurationUs}
-                      onChange={(e) => updateCurrentProfileField('overlapDurationUs', parseInt(e.target.value, 10))}
-                      className="w-full accent-cyan-500"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Set to 0 µs to eliminate overlap and preserve full counter-acceleration on sub-tick.
-                    </p>
+              {/* Sliders Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 font-mono text-xs">
+                {/* Accuracy Threshold */}
+                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-300 font-medium">Accuracy Threshold:</span>
+                    <span className="text-cyan-400 font-bold">{activeWeapon.accuracyThreshold.toFixed(1)} u/s</span>
                   </div>
-
-                  {/* Brake Bias Multiplier */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-slate-300">Brake Bias Multiplier:</span>
-                      <span className="text-amber-400 font-bold">
-                        {config.brakeProfiles[selectedProfileIndex].brake_bias_multiplier.toFixed(2)}x
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0.80"
-                      max="1.30"
-                      step="0.01"
-                      value={config.brakeProfiles[selectedProfileIndex].brake_bias_multiplier}
-                      onChange={(e) => updateCurrentProfileField('brakeBiasMultiplier', parseFloat(e.target.value))}
-                      className="w-full accent-amber-500"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Neutral standard is 1.00x for mathematically pure SDK physics deceleration.
-                    </p>
+                  <input
+                    type="range"
+                    min="10"
+                    max="60"
+                    step="1"
+                    value={activeWeapon.accuracyThreshold}
+                    onChange={(e) => updateProfileField('accuracyThreshold', parseFloat(e.target.value))}
+                    className="w-full accent-cyan-500"
+                  />
+                  <div className="text-[10px] text-slate-500 flex justify-between">
+                    <span>17.0 u/s (Sniper standard)</span>
+                    <span>34.0 u/s (Rifle/Pistol standard)</span>
                   </div>
+                </div>
 
-                  {/* Momentum Memory */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-slate-300">Momentum Memory Window:</span>
-                      <span className="text-cyan-400 font-bold">
-                        {config.brakeProfiles[selectedProfileIndex].momentum_memory_ms.toFixed(1)} ms
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="10"
-                      max="60"
-                      step="1"
-                      value={config.brakeProfiles[selectedProfileIndex].momentum_memory_ms}
-                      onChange={(e) => updateCurrentProfileField('momentumMemoryMs', parseFloat(e.target.value))}
-                      className="w-full accent-cyan-500"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Time horizon to retain continuous directional momentum during directional transitions.
-                    </p>
+                {/* Key Overlap Window */}
+                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-300 font-medium">Key Overlap Window:</span>
+                    <span className="text-cyan-400 font-bold">{activeWeapon.overlapDurationUs} µs</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="8000"
+                    step="500"
+                    value={activeWeapon.overlapDurationUs}
+                    onChange={(e) => updateProfileField('overlapDurationUs', parseInt(e.target.value, 10))}
+                    className="w-full accent-cyan-500"
+                  />
+                  <div className="text-[10px] text-slate-500">
+                    Standard is 0 µs (zero overlap ensures instantaneous sub-tick counter-braking).
+                  </div>
+                </div>
+
+                {/* Brake Bias Multiplier */}
+                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-300 font-medium">Brake Bias Multiplier:</span>
+                    <span className="text-cyan-400 font-bold">{activeWeapon.brakeBiasMultiplier.toFixed(2)}x</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.80"
+                    max="1.30"
+                    step="0.01"
+                    value={activeWeapon.brakeBiasMultiplier}
+                    onChange={(e) => updateProfileField('brakeBiasMultiplier', parseFloat(e.target.value))}
+                    className="w-full accent-cyan-500"
+                  />
+                  <div className="text-[10px] text-slate-500">
+                    Standard is 1.00x (pure mathematical physics deceleration without arbitrary scaling).
+                  </div>
+                </div>
+
+                {/* Momentum Memory */}
+                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-300 font-medium">Momentum Memory:</span>
+                    <span className="text-cyan-400 font-bold">{activeWeapon.momentumMemoryMs.toFixed(1)} ms</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="60"
+                    step="1"
+                    value={activeWeapon.momentumMemoryMs}
+                    onChange={(e) => updateProfileField('momentumMemoryMs', parseFloat(e.target.value))}
+                    className="w-full accent-cyan-500"
+                  />
+                  <div className="text-[10px] text-slate-500">
+                    Memory horizon across rapid A-D alternating strafes (Rifle: 35ms, Sniper: 40ms).
                   </div>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         )}
 
-        {/* ══ Tab 3: Bunnyhop Automation ══ */}
+        {/* ════ TAB 3: BUNNYHOP AUTOMATION ════ */}
         {activeTab === 'bhop' && (
-          <div className="bg-[#11141c] border border-[#1e2433] rounded-xl p-6 space-y-6">
-            <div className="flex items-center justify-between border-b border-[#1e2433] pb-4">
+          <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#1b202e] pb-3">
               <div>
-                <h3 className="text-sm font-mono font-bold text-slate-200">BUNNYHOP AUTOMATION SUBSYSTEM</h3>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Sub-tick spacebar scroll simulation and cadence generation
+                <span className="text-sm font-mono font-bold text-slate-200">BUNNYHOP AUTOMATION</span>
+                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                  Sub-tick scroll wheel pulse generation and cadence alignment
                 </p>
               </div>
               <button
                 onClick={saveConfig}
                 disabled={saving}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-mono font-bold text-xs rounded-lg transition"
+                className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
               >
+                <Save className="w-3.5 h-3.5" />
                 {saving ? 'SAVING...' : 'SAVE TO MARCO.INI'}
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-[#090a0f] rounded-lg border border-[#1e2433]">
-                  <span className="text-slate-300">Bunnyhop Engine:</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-[#0c0e14] rounded border border-[#1b202e]">
+                  <span className="text-slate-300">Bhop Subsystem:</span>
                   <button
-                    onClick={() => setConfig(prev => prev ? { ...prev, bhopEnabled: !prev.bhopEnabled } : null)}
+                    onClick={() => setConfig(prev => ({ ...prev, bhopEnabled: !prev.bhopEnabled }))}
                     className={`px-3 py-1 rounded font-bold ${
-                      config?.bhopEnabled 
+                      config.bhopEnabled 
                         ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 
                         : 'bg-slate-800 text-slate-400'
                     }`}
                   >
-                    {config?.bhopEnabled ? 'ENABLED' : 'DISABLED'}
+                    {config.bhopEnabled ? 'ENABLED' : 'DISABLED'}
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-slate-300">Execution Mode:</label>
+                <div className="space-y-1.5">
+                  <span className="text-slate-400 text-[11px]">Execution Cadence Mode:</span>
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { id: 1, name: '1: Legit' },
@@ -731,11 +743,11 @@ export default function App() {
                     ].map(m => (
                       <button
                         key={m.id}
-                        onClick={() => setConfig(prev => prev ? { ...prev, bhopMode: m.id } : null)}
+                        onClick={() => setConfig(prev => ({ ...prev, bhopMode: m.id }))}
                         className={`p-2.5 rounded border text-left transition ${
-                          config?.bhopMode === m.id
-                            ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold'
-                            : 'bg-[#090a0f] border-[#1e2433] text-slate-400 hover:text-slate-200'
+                          config.bhopMode === m.id
+                            ? 'bg-cyan-500/10 border-cyan-500/60 text-cyan-300 font-bold'
+                            : 'bg-[#0c0e14] border-[#1b202e] text-slate-400 hover:text-slate-200'
                         }`}
                       >
                         {m.name}
@@ -745,35 +757,35 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="space-y-2">
+              <div className="space-y-3">
+                <div className="bg-[#0c0e14] border border-[#1b202e] p-3 rounded space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-300">Airborne Lock Delay:</span>
-                    <span className="text-cyan-400 font-bold">{config?.airborneDelayMs || 350} ms</span>
+                    <span className="text-cyan-400 font-bold">{config.airborneDelayMs} ms</span>
                   </div>
                   <input
                     type="range"
                     min="100"
                     max="600"
                     step="10"
-                    value={config?.airborneDelayMs || 350}
-                    onChange={(e) => setConfig(prev => prev ? { ...prev, airborneDelayMs: parseInt(e.target.value, 10) } : null)}
+                    value={config.airborneDelayMs}
+                    onChange={(e) => setConfig(prev => ({ ...prev, airborneDelayMs: parseInt(e.target.value, 10) }))}
                     className="w-full accent-cyan-500"
                   />
                 </div>
 
-                <div className="space-y-2">
+                <div className="bg-[#0c0e14] border border-[#1b202e] p-3 rounded space-y-2">
                   <div className="flex justify-between">
                     <span className="text-slate-300">Scroll Burst Gap:</span>
-                    <span className="text-cyan-400 font-bold">{config?.scrollBurstGapMs || 2} ms</span>
+                    <span className="text-cyan-400 font-bold">{config.scrollBurstGapMs} ms</span>
                   </div>
                   <input
                     type="range"
                     min="1"
                     max="10"
                     step="1"
-                    value={config?.scrollBurstGapMs || 2}
-                    onChange={(e) => setConfig(prev => prev ? { ...prev, scrollBurstGapMs: parseInt(e.target.value, 10) } : null)}
+                    value={config.scrollBurstGapMs}
+                    onChange={(e) => setConfig(prev => ({ ...prev, scrollBurstGapMs: parseInt(e.target.value, 10) }))}
                     className="w-full accent-cyan-500"
                   />
                 </div>
@@ -782,86 +794,87 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ Tab 4: Sub-tick Engine Physics Parameters ══ */}
+        {/* ════ TAB 4: PHYSICS CONSTANTS ════ */}
         {activeTab === 'physics' && (
-          <div className="bg-[#11141c] border border-[#1e2433] rounded-xl p-6 space-y-6">
-            <div className="flex items-center justify-between border-b border-[#1e2433] pb-4">
+          <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#1b202e] pb-3">
               <div>
-                <h3 className="text-sm font-mono font-bold text-slate-200">SOURCE SDK / VALVE PHYSICS CONSTANTS</h3>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Governs offline LUT generation and continuous acceleration simulation
+                <span className="text-sm font-mono font-bold text-slate-200">VALVE SOURCE SDK PHYSICS PIPELINE</span>
+                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                  Internal simulation parameters matching Counter-Strike 2 engine settings
                 </p>
               </div>
               <button
                 onClick={saveConfig}
                 disabled={saving}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-mono font-bold text-xs rounded-lg transition"
+                className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
               >
+                <Save className="w-3.5 h-3.5" />
                 {saving ? 'SAVING...' : 'SAVE TO MARCO.INI'}
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs">
-              <div className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
+              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-300">sv_friction:</span>
-                  <span className="text-amber-400 font-bold">{config?.physFriction.toFixed(2) || '5.20'}</span>
+                  <span className="text-slate-300">sv_friction (Friction Coefficient):</span>
+                  <span className="text-cyan-400 font-bold">{config.physFriction.toFixed(2)}</span>
                 </div>
                 <input
                   type="range"
                   min="2.0"
                   max="10.0"
                   step="0.1"
-                  value={config?.physFriction || 5.2}
-                  onChange={(e) => setConfig(prev => prev ? { ...prev, physFriction: parseFloat(e.target.value) } : null)}
-                  className="w-full accent-amber-500"
+                  value={config.physFriction}
+                  onChange={(e) => setConfig(prev => ({ ...prev, physFriction: parseFloat(e.target.value) }))}
+                  className="w-full accent-cyan-500"
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-300">sv_accelerate:</span>
-                  <span className="text-amber-400 font-bold">{config?.physAccelerate.toFixed(2) || '5.50'}</span>
+                  <span className="text-slate-300">sv_accelerate (Opposing Acceleration):</span>
+                  <span className="text-cyan-400 font-bold">{config.physAccelerate.toFixed(2)}</span>
                 </div>
                 <input
                   type="range"
                   min="2.0"
                   max="10.0"
                   step="0.1"
-                  value={config?.physAccelerate || 5.5}
-                  onChange={(e) => setConfig(prev => prev ? { ...prev, physAccelerate: parseFloat(e.target.value) } : null)}
-                  className="w-full accent-amber-500"
+                  value={config.physAccelerate}
+                  onChange={(e) => setConfig(prev => ({ ...prev, physAccelerate: parseFloat(e.target.value) }))}
+                  className="w-full accent-cyan-500"
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
                 <div className="flex justify-between">
                   <span className="text-slate-300">sv_stopspeed:</span>
-                  <span className="text-cyan-400 font-bold">{config?.physStopSpeed.toFixed(1) || '80.0'} u/s</span>
+                  <span className="text-cyan-400 font-bold">{config.physStopSpeed.toFixed(1)} u/s</span>
                 </div>
                 <input
                   type="range"
                   min="40.0"
                   max="120.0"
                   step="1.0"
-                  value={config?.physStopSpeed || 80.0}
-                  onChange={(e) => setConfig(prev => prev ? { ...prev, physStopSpeed: parseFloat(e.target.value) } : null)}
+                  value={config.physStopSpeed}
+                  onChange={(e) => setConfig(prev => ({ ...prev, physStopSpeed: parseFloat(e.target.value) }))}
                   className="w-full accent-cyan-500"
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
                 <div className="flex justify-between">
                   <span className="text-slate-300">sv_maxspeed:</span>
-                  <span className="text-cyan-400 font-bold">{config?.physMaxSpeed.toFixed(1) || '250.0'} u/s</span>
+                  <span className="text-cyan-400 font-bold">{config.physMaxSpeed.toFixed(1)} u/s</span>
                 </div>
                 <input
                   type="range"
                   min="200.0"
                   max="300.0"
                   step="1.0"
-                  value={config?.physMaxSpeed || 250.0}
-                  onChange={(e) => setConfig(prev => prev ? { ...prev, physMaxSpeed: parseFloat(e.target.value) } : null)}
+                  value={config.physMaxSpeed}
+                  onChange={(e) => setConfig(prev => ({ ...prev, physMaxSpeed: parseFloat(e.target.value) }))}
                   className="w-full accent-cyan-500"
                 />
               </div>

@@ -277,6 +277,16 @@ void TakeSnapshot(RuntimeSnapshot& out) {
     out.timerOversleepPeakUs = telemetry::g_timerOversleepPeak.load(std::memory_order_relaxed);
     out.wakeVarianceUs = telemetry::g_wakeVarianceUs.load(std::memory_order_relaxed);
 
+    // Tactical Telemetry HUD values
+    out.currentSpeed = std::hypot(s_state.vel.vx, s_state.vel.vy);
+    out.lastBrakeUs = g_lastBrakeUs.load(std::memory_order_relaxed);
+    out.lastPreSpeed = static_cast<double>(g_lastPreSpeedTenths.load(std::memory_order_relaxed)) / 10.0;
+    uint32_t resCode = g_lastBrakeResultCode.load(std::memory_order_relaxed);
+    if (resCode == 1) strcpy_s(out.lastBrakeResult, "FINE");
+    else if (resCode == 2) strcpy_s(out.lastBrakeResult, "EARLY");
+    else if (resCode == 3) strcpy_s(out.lastBrakeResult, "OVER");
+    else strcpy_s(out.lastBrakeResult, "IDLE");
+
     // Persistent static caches for timing telemetry
     static int64_t cachedTimerJitterUs = 0;
     static int64_t cachedWakeOversleepUs = 0;

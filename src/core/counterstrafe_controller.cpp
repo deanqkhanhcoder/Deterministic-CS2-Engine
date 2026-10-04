@@ -176,6 +176,11 @@ struct NoiseGenerator {
 
 static thread_local NoiseGenerator s_noise;
 
+// Telemetry globals for last brake event
+alignas(64) std::atomic<int64_t> g_lastBrakeUs{0};
+alignas(64) std::atomic<int64_t> g_lastPreSpeedTenths{0};
+alignas(64) std::atomic<uint32_t> g_lastBrakeResultCode{1}; // 1=FINE, 2=EARLY, 3=OVER
+
 int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     const RuntimeConfig& rc = rcfg::Get();
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
@@ -187,6 +192,17 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     double vx = s_state.vel.vx;
     double vy = s_state.vel.vy;
     
+    // Check for diagonal movement context
+    Axis orthAx = (ax == Axis::X) ? Axis::Y : Axis::X;
+    Key orthPos = keymap::AxisPosKey[ai(orthAx)];
+    Key orthNeg = keymap::AxisNegKey[ai(orthAx)];
+
+    bool orthPhys = s_state.phys[ki(orthPos)] || s_state.phys[ki(orthNeg)];
+    bool orthLog  = s_state.logical[ki(orthPos)] || s_state.logical[ki(orthNeg)];
+    bool orthRecent = (timing::NowMs() - s_state.mem.lastReleaseTimeMs[ai(orthAx)]) < 120;
+    bool isDiagonal = orthPhys || orthLog || orthRecent ||
+                      (std::abs(vx) > 30.0 && std::abs(vy) > 30.0);
+
     // Cross-check with continuous physical hold time of the releasing key.
     // If the player held this key continuously (e.g. running for >200ms),
     // velocity along this direction cannot be less than the physical hold acceleration.
@@ -195,15 +211,17 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
         (ax == Axis::X) ? heldUs : 0,
         (ax == Axis::Y) ? heldUs : 0,
         1, 1, rc, physVx, physVy);
-    const double sustainedMinV = (ax == Axis::X) ? physVx : physVy;
+    double sustainedMinV = (ax == Axis::X) ? physVx : physVy;
+
+    // In CS2, when strafing diagonally, vector speed is capped by sv_maxspeed (250 u/s),
+    // so steady-state per-axis component speed is capped at 250 / sqrt(2) ≈ 176.78 u/s.
+    if (isDiagonal) {
+        constexpr double kInvSqrt2 = 0.7071067811865475;
+        sustainedMinV *= kInvSqrt2;
+    }
 
     // 3. Determine wish_mode for the offline LUT
     int wish_mode = 0;
-    
-    Axis orthAx = (ax == Axis::X) ? Axis::Y : Axis::X;
-    Key orthPos = keymap::AxisPosKey[ai(orthAx)];
-    Key orthNeg = keymap::AxisNegKey[ai(orthAx)];
-    
     double v_orth = (ax == Axis::X) ? vy : vx;
     if (std::abs(v_orth) > 0.1) {
         bool posLog = s_state.logical[ki(orthPos)];
@@ -222,6 +240,12 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     double v_target = ((ax == Axis::X) ? vx : vy) * relSign;
     if (sustainedMinV > v_target) {
         v_target = sustainedMinV;
+    }
+    if (isDiagonal) {
+        constexpr double kMaxDiagAxisSpeed = 250.0 * 0.7071067811865475; // ~176.78 u/s
+        if (v_target > kMaxDiagAxisSpeed) {
+            v_target = kMaxDiagAxisSpeed;
+        }
     }
     if (v_target <= 0.0) return 0;
     
@@ -247,6 +271,12 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
         return 0;
     }
 
+    // When releasing from diagonal strafe, compensate for the diagonal projection
+    // by trimming ~1 tick (~15.6 ms) of excess brake duration to eliminate over-counter-strafe.
+    if (isDiagonal && pureDurMs > 16) {
+        pureDurMs = std::max(16, pureDurMs - 16);
+    }
+
     // 5. Apply authority biases through the bounded, deterministic policy.
     // Do not allow profile multipliers (< 1.0) or negative bias to reduce the
     // brake duration below the physical ticks required to reach the target threshold.
@@ -257,8 +287,11 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     int64_t baseBrakeUs = (int64_t)finalDurMs * 1000LL;
     int64_t effectiveBrakeUs = std::max(100LL, baseBrakeUs);
     
-    // No jitter: +-0.25 ms on a tick-aligned hold can drop a whole tick.
-    
+    // Record telemetry for HUD
+    g_lastBrakeUs.store(effectiveBrakeUs, std::memory_order_relaxed);
+    g_lastPreSpeedTenths.store(static_cast<int64_t>(std::hypot(vx, vy) * 10.0), std::memory_order_relaxed);
+    g_lastBrakeResultCode.store(1, std::memory_order_relaxed); // FINE
+
     return effectiveBrakeUs;
 }
 

@@ -49,6 +49,9 @@ extern std::mutex s_stateMutex;
 extern std::mutex s_operationMutex;
 extern std::atomic<bool> s_suspendedAtomic;
 extern bool s_hookInstalled;
+extern std::atomic<int64_t> g_lastBrakeUs;
+extern std::atomic<int64_t> g_lastPreSpeedTenths;
+extern std::atomic<uint32_t> g_lastBrakeResultCode;
 
 void PublishEngineState();
 void NotifyStateChanged();
