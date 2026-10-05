@@ -76,6 +76,13 @@ constexpr WORD ScanCode[] = {
     0x00,  // Mouse1 (no scan code)
 };
 
+constexpr WORD SpaceScanCode = 0x39;
+static_assert(ScanCode[static_cast<int>(Key::W)] == 0x11 &&
+              ScanCode[static_cast<int>(Key::A)] == 0x1E &&
+              ScanCode[static_cast<int>(Key::S)] == 0x1F &&
+              ScanCode[static_cast<int>(Key::D)] == 0x20 && SpaceScanCode == 0x39,
+              "Movement scan codes must retain the Windows Set 1 mapping");
+
 // Key names for debug logging
 constexpr const char* KeyName[] = { "W", "S", "A", "D", "M1" };
 constexpr const char* AxisName[] = { "X", "Y" };

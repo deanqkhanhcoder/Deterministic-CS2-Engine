@@ -156,3 +156,21 @@ cmake --build build/make-tests --target check --parallel
 - `state_engine.cpp`: publish `VelocityTracker` cùng state, extrapolate bản sao bằng `AdvanceVelocity` tại snapshot; không đọc `s_state.vel` ngoài khóa hoặc sửa state engine từ telemetry. Timing stats được cập nhật cả sau khi timer ngắn đã kết thúc; `timerJitterP99Us` và `timerSampleCount` được xuất qua IPC.
 - `lastBrakeMs` / `lastBrakeTicks` giữ phần thập phân (tick equivalents @64 Hz). UI không còn fallback 93 ms / 6 ticks / 215 u/s; timeline chỉ là phase guide.
 - Kiểm thử: `cd ui; npm test; npm run build`; `cmake --build build/make-tests --target check`; `mingw32-make release`.
+
+## Injection Path Latency
+
+- `MarcoSendInput` chọn export `win32u!NtUserSendInput` resolve một lần qua `LoadLibraryExW(..., LOAD_LIBRARY_SEARCH_SYSTEM32)` / `GetProcAddress`; giữ DLL reference tới shutdown, warm resolve trước hot path. Fallback `user32!SendInput` chỉ khi không resolve được. Không hardcode syscall number, không asm, không retry zero/partial-send sang path khác để tránh duplicate input.
+- Signature dùng `UINT (NTAPI *)(UINT, LPINPUT, int)`: trả inserted-event count, không phải NTSTATUS. Tham khảo [implementation ABI của Wine](https://github.com/wine-mirror/wine/blob/master/dlls/win32u/input.c) và [SendInput return semantics](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput). Scan-code templates đặt wVk=0, không UNICODE, dwExtraInfo=0; Set 1 W/A/S/D/Space được static_assert.
+- Bỏ watermark; giữ một bit test LLKHF_INJECTED / LLMHF_INJECTED do Windows set. Không thay bằng g_injecting: cửa sổ gọi không nhận diện được callback trễ và có thể bỏ phím vật lý đồng thời. Hai path đều là synthetic input và giữ cùng hành vi flags; dwExtraInfo=0 không biến input thành HID. [Microsoft KBDLLHOOKSTRUCT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct).
+- Đo ngày 2026-10-05, Windows 10 Home 22H2 x64 build 19045, `marco_debug.exe --benchmark-injection`. QPC: warmup 1000 cặp call; 9 batch x 20000 call/path, luân phiên thứ tự; avg_ns là median của các batch mean. Zero-input không phát phím vào desktop và chỉ đo dispatch/validation, không đo latency của burst 2–4 event.
+
+```text
+[INJ] module=C:\WINDOWS\System32\win32u.dll offset=0x2010 workload=zero-input
+[INJ] path=syscall avg_ns=1282.4
+[INJ] path=user32 avg_ns=1281.0
+[INJ] zero-input dispatch only; does not measure delivered-key latency
+```
+
+Trước (user32): 1281.0 ns; sau (native export): 1282.4 ns, chênh +1.4 ns (~0.11%), chưa xác nhận cải thiện. Trên DLL đang cài, `user32!SendInput` là jump thunk và target khớp `win32u!NtUserSendInput`; không có bằng chứng về marshal overhead 15–40% trên build này. Đây là dynamic export dispatch, không phải bypass kernel validation.
+
+Windows 11 23H2 và valid-input/end-to-end benchmark chưa được kiểm tra trên máy này. Build MinGW Release/Debug với -Wall/-Wextra/-pedantic không warning; MSVC /W4 chưa kiểm tra vì không có cl. CMake check: 19/19 tests, gồm timing_lifecycle và physics_fixture_regression. Test fake kiểm tra preferred path, fallback khi export thiếu, zero/partial returns không retry, bảo toàn GetLastError và scan-code/zero-extra-info. PE import audit xác nhận không import tĩnh win32u.dll/NtUserSendInput.

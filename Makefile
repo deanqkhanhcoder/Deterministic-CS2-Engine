@@ -13,7 +13,7 @@ BASE_LDLIBS   = -luser32 -lwinmm -lws2_32 -lavrt -lshell32
 COMMON_CORE_SRCS = \
 	src/core/bhop.cpp src/core/config_io.cpp \
 	src/core/counterstrafe_controller.cpp src/core/debug_logger.cpp \
-	src/core/injection.cpp src/core/input_capture.cpp \
+	src/core/injection.cpp src/core/syscall_dispatch.cpp src/core/input_capture.cpp \
 	src/core/input_router.cpp src/core/ipc_server.cpp src/core/main.cpp \
 	src/core/movement_reconstruction.cpp src/core/runtime_config.cpp \
 	src/core/state_engine.cpp src/core/state_reconciliation.cpp \

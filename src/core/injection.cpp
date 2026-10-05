@@ -1,4 +1,5 @@
 #include "injection.h"
+#include "syscall_dispatch.h"
 
 #include <array>
 #include <mutex>
@@ -17,13 +18,13 @@ struct InputTemplates {
     std::array<INPUT, kReleaseSlotCount> up{};
 };
 
-INPUT MakeKeyboardInput(WORD vk, WORD scan, bool keyUp) {
+INPUT MakeKeyboardInput(WORD scan, bool keyUp) {
     INPUT input{};
     input.type = INPUT_KEYBOARD;
-    input.ki.wVk = vk;
+    // Scan-code input needs no virtual-key translation in the dispatch path.
+    input.ki.wVk = 0;
     input.ki.wScan = scan;
     input.ki.dwFlags = KEYEVENTF_SCANCODE | (keyUp ? KEYEVENTF_KEYUP : 0);
-    input.ki.dwExtraInfo = kInjectedInputMarker;
     return input;
 }
 
@@ -31,7 +32,6 @@ INPUT MakeMouseButtonInput(bool keyUp) {
     INPUT input{};
     input.type = INPUT_MOUSE;
     input.mi.dwFlags = keyUp ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_LEFTDOWN;
-    input.mi.dwExtraInfo = kInjectedInputMarker;
     return input;
 }
 
@@ -40,11 +40,11 @@ const InputTemplates& Templates() {
     static const InputTemplates templates = [] {
         InputTemplates result{};
         for (std::size_t index = 0; index < kMovementKeyCount; ++index) {
-            result.down[index] = MakeKeyboardInput(keymap::VkCode[index], keymap::ScanCode[index], false);
-            result.up[index] = MakeKeyboardInput(keymap::VkCode[index], keymap::ScanCode[index], true);
+            result.down[index] = MakeKeyboardInput(keymap::ScanCode[index], false);
+            result.up[index] = MakeKeyboardInput(keymap::ScanCode[index], true);
         }
-        result.down[kSpaceSlot] = MakeKeyboardInput(VK_SPACE, 0x39, false);
-        result.up[kSpaceSlot] = MakeKeyboardInput(VK_SPACE, 0x39, true);
+        result.down[kSpaceSlot] = MakeKeyboardInput(keymap::SpaceScanCode, false);
+        result.up[kSpaceSlot] = MakeKeyboardInput(keymap::SpaceScanCode, true);
         result.down[kMouseSlot] = MakeMouseButtonInput(false);
         result.up[kMouseSlot] = MakeMouseButtonInput(true);
         return result;
@@ -54,7 +54,7 @@ const InputTemplates& Templates() {
 
 #ifndef MARCO_INJECTION_TESTING
 UINT DefaultSendInput(UINT count, INPUT* inputs, int inputSize) {
-    return ::SendInput(count, inputs, inputSize);
+    return MarcoSendInput(count, inputs, inputSize);
 }
 #else
 UINT DefaultSendInput(UINT, INPUT*, int) {
@@ -80,11 +80,11 @@ UINT SendLocked(const INPUT* inputs, UINT count) {
 int ReleaseSlotFor(const INPUT& input) {
     const auto& templates = Templates();
     if (input.type == INPUT_MOUSE) {
-        if (input.mi.dwExtraInfo != kInjectedInputMarker) return -1;
         const DWORD buttonFlags = input.mi.dwFlags & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP);
         return buttonFlags != 0 ? static_cast<int>(kMouseSlot) : -1;
     }
-    if (input.type != INPUT_KEYBOARD || input.ki.dwExtraInfo != kInjectedInputMarker) return -1;
+    if (input.type != INPUT_KEYBOARD || (input.ki.dwFlags & KEYEVENTF_SCANCODE) == 0 ||
+        (input.ki.dwFlags & KEYEVENTF_UNICODE) != 0) return -1;
     for (std::size_t index = 0; index < kKeyboardReleaseKeyCount; ++index) {
         if (input.ki.wScan == templates.down[index].ki.wScan &&
             input.ki.wVk == templates.down[index].ki.wVk) {
@@ -342,7 +342,6 @@ UINT MouseWheel(int delta) {
     input.type = INPUT_MOUSE;
     input.mi.dwFlags = MOUSEEVENTF_WHEEL;
     input.mi.mouseData = static_cast<DWORD>(delta);
-    input.mi.dwExtraInfo = kInjectedInputMarker;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!CanDispatchNonReleaseLocked()) return 0;
     return SendLocked(&input, 1);
@@ -360,7 +359,6 @@ UINT MouseWheelIf(int delta, DispatchValidator validator, const void* context) {
     input.type = INPUT_MOUSE;
     input.mi.dwFlags = MOUSEEVENTF_WHEEL;
     input.mi.mouseData = static_cast<DWORD>(delta);
-    input.mi.dwExtraInfo = kInjectedInputMarker;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!CanDispatchNonReleaseLocked(validator, context)) return 0;
     return SendLocked(&input, 1);

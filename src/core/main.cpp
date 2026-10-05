@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <cstdio>
+#include <cstring>
 #include <thread>
 #include <ctime>
 #include <atomic>
@@ -34,6 +35,7 @@
 #include "topology.h"
 #include "etw_controller.h"
 #include "injection.h"
+#include "syscall_dispatch.h"
 
 // â”€â”€ Crash Resilience & Startup Forensics â”€â”€
 using NtSetTimerResolutionFn = LONG (WINAPI *)(ULONG, BOOLEAN, PULONG);
@@ -200,7 +202,13 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 //  ENTRY POINT
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
+#ifndef MARCO_RELEASE
+    // Debug-only, zero-input benchmark exits before hooks/daemon initialization.
+    if (std::strcmp(commandLine, "--benchmark-injection") == 0) return BenchmarkInjectionPaths();
+#else
+    (void)commandLine;
+#endif
     // â”€â”€ Crash handler â”€â”€
     PVOID crashHandler = AddVectoredExceptionHandler(1, CrashVectoredExceptionHandler);
     SAFE_STARTUP_TRACE("MUTEX_CHECK");
@@ -243,6 +251,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SAFE_STARTUP_TRACE("SUBSYSTEM_INIT");
     // â”€â”€ Initialize subsystems â”€â”€
     dlog::Init();
+    InitializeInjectionDispatch();
     timing::Init();
     rcfg::Init();
     target_platform::Init();

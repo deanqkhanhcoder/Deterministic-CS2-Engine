@@ -75,3 +75,10 @@ assert shutdown_body.index("s_workerThread.join()") < shutdown_body.index(
 )
 
 print("test_hook_deferral: hook, timer, and bhop work defer to owner thread")
+
+# Kernel flags cover delayed delivery without swallowing concurrent physical input.
+keyboard_injection_filter = function_body("static LRESULT CALLBACK KeyboardProc")
+assert "LLKHF_INJECTED" in keyboard_injection_filter
+assert "dwExtraInfo" not in keyboard_injection_filter
+mouse = function_body("static LRESULT CALLBACK MouseProc")
+assert "LLMHF_INJECTED" in mouse and "dwExtraInfo" not in mouse

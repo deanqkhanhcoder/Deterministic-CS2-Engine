@@ -23,6 +23,7 @@ set(MARCO_COMMON_CORE_SOURCES
     src/core/counterstrafe_controller.cpp
     src/core/debug_logger.cpp
     src/core/injection.cpp
+    src/core/syscall_dispatch.cpp
     src/core/input_capture.cpp
     src/core/input_router.cpp
     src/core/ipc_server.cpp
@@ -136,10 +137,12 @@ marco_add_safe_test(marco_test_system_tray
 marco_add_safe_test(marco_test_injection
     tests/unit/test_injection.cpp
     src/core/injection.cpp
+    src/core/syscall_dispatch.cpp
 )
 # This causes DefaultSendInput to be a local fake.  The binary neither imports
 # nor calls user32!SendInput; the test installs its deterministic backend.
-target_compile_definitions(marco_test_injection PRIVATE MARCO_INJECTION_TESTING)
+target_compile_definitions(marco_test_injection PRIVATE
+    MARCO_INJECTION_TESTING MARCO_SYSCALL_DISPATCH_TESTING)
 
 marco_add_safe_test(marco_test_physics
     tests/unit/test_physics.cpp

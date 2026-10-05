@@ -1,4 +1,5 @@
 #include "injection.h"
+#include "../../src/core/syscall_dispatch.h"
 
 #include <atomic>
 #include <cassert>
@@ -57,11 +58,44 @@ const INPUT& Sent(std::size_t call, std::size_t input) {
     return g_calls.at(call).inputs.at(input);
 }
 
-void AssertTaggedKeyboard(const INPUT& input, WORD scan, DWORD flags) {
+int g_nativeCalls = 0, g_fallbackCalls = 0;
+UINT g_nativeResult = 0;
+UINT NTAPI FakeNativeDispatch(UINT count, LPINPUT inputs, int size) {
+    assert(count == 2 && inputs != nullptr && size == sizeof(INPUT));
+    ++g_nativeCalls;
+    SetLastError(ERROR_ACCESS_DENIED);
+    return g_nativeResult;
+}
+UINT WINAPI FakeFallbackDispatch(UINT count, LPINPUT inputs, int size) {
+    assert(count == 2 && inputs != nullptr && size == sizeof(INPUT));
+    ++g_fallbackCalls;
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return 1;
+}
+
+void TestNativeDispatchAndUnavailableFallback() {
+    INPUT inputs[2]{};
+    SetInjectionDispatchForTesting(FakeNativeDispatch, FakeFallbackDispatch);
+    SetLastError(123);
+    InitializeInjectionDispatch();
+    assert(GetLastError() == 123);
+    for (UINT result : {0u, 1u, 2u}) {
+        g_nativeResult = result;
+        assert(MarcoSendInput(2, inputs, sizeof(INPUT)) == result);
+        assert(GetLastError() == ERROR_ACCESS_DENIED);
+    }
+    assert(g_nativeCalls == 3 && g_fallbackCalls == 0);
+    SetInjectionDispatchForTesting(nullptr, FakeFallbackDispatch);
+    assert(MarcoSendInput(2, inputs, sizeof(INPUT)) == 1);
+    assert(GetLastError() == ERROR_INVALID_PARAMETER && g_fallbackCalls == 1);
+}
+
+void AssertScanCodeKeyboard(const INPUT& input, WORD scan, DWORD flags) {
     assert(input.type == INPUT_KEYBOARD);
     assert(input.ki.wScan == scan);
     assert(input.ki.dwFlags == flags);
-    assert(input.ki.dwExtraInfo == injection::kInjectedInputMarker);
+    assert(input.ki.wVk == 0);
+    assert(input.ki.dwExtraInfo == 0);
 }
 
 void TestGeneratedEventsAndExactResults() {
@@ -73,14 +107,14 @@ void TestGeneratedEventsAndExactResults() {
 
     assert(g_calls.size() == 3);
     assert(g_calls[0].requested == 1);
-    AssertTaggedKeyboard(Sent(0, 0), 0x11, KEYEVENTF_SCANCODE);
+    AssertScanCodeKeyboard(Sent(0, 0), 0x11, KEYEVENTF_SCANCODE);
     assert(g_calls[1].requested == 2);
-    AssertTaggedKeyboard(Sent(1, 0), 0x1E, KEYEVENTF_SCANCODE);
-    AssertTaggedKeyboard(Sent(1, 1), 0x1E, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(1, 0), 0x1E, KEYEVENTF_SCANCODE);
+    AssertScanCodeKeyboard(Sent(1, 1), 0x1E, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
     assert(Sent(2, 0).type == INPUT_MOUSE);
     assert(Sent(2, 0).mi.dwFlags == MOUSEEVENTF_WHEEL);
     assert(Sent(2, 0).mi.mouseData == static_cast<DWORD>(-WHEEL_DELTA));
-    assert(Sent(2, 0).mi.dwExtraInfo == injection::kInjectedInputMarker);
+    assert(Sent(2, 0).mi.dwExtraInfo == 0);
 }
 
 void TestReconcileIgnoresNormalHeldInputs() {
@@ -108,8 +142,8 @@ void TestPartialKeyUpTracksAndReconcilesWithBoundedRetries() {
     assert(injection::PendingReleaseCount() == 0);
     // One down; KeyUp has exactly two failed retries; reconciliation succeeds once.
     assert(g_calls.size() == 4);
-    AssertTaggedKeyboard(Sent(1, 0), 0x1F, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
-    AssertTaggedKeyboard(Sent(2, 0), 0x1F, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(1, 0), 0x1F, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(2, 0), 0x1F, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
 }
 
 void TestPartialMouseClickTracksAndReconcilesLeftButton() {
@@ -124,7 +158,7 @@ void TestPartialMouseClickTracksAndReconcilesLeftButton() {
     assert(Sent(0, 0).mi.dwFlags == MOUSEEVENTF_LEFTDOWN);
     assert(Sent(0, 1).mi.dwFlags == MOUSEEVENTF_LEFTUP);
     assert(Sent(1, 0).mi.dwFlags == MOUSEEVENTF_LEFTUP);
-    assert(Sent(1, 0).mi.dwExtraInfo == injection::kInjectedInputMarker);
+    assert(Sent(1, 0).mi.dwExtraInfo == 0);
 }
 
 void TestPartialKeyboardTapReconcilesBeforeReturning() {
@@ -132,7 +166,7 @@ void TestPartialKeyboardTapReconcilesBeforeReturning() {
     assert(injection::KeyDownUp(Key::D) == 1);
     assert(injection::PendingReleaseCount() == 0);
     assert(g_calls.size() == 2);
-    AssertTaggedKeyboard(Sent(1, 0), 0x20, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(1, 0), 0x20, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
 }
 
 void TestFailedRecoveryEntersReleaseOnlyMode() {
@@ -187,7 +221,7 @@ void TestGuardedMovementAndReleaseNeverReachRejectedForeground() {
     assert(injection::ReconcilePendingReleasesIf(ValidateDispatch, &accept) == 1);
     assert(g_calls.size() == 2);
     assert(injection::PendingReleaseCount() == 0);
-    AssertTaggedKeyboard(Sent(1, 0), 0x1E,
+    AssertScanCodeKeyboard(Sent(1, 0), 0x1E,
                          KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
 }
 
@@ -196,14 +230,14 @@ void TestFailsafeReleasesAllInputsAndKeepsFailuresPending() {
     assert(injection::ShutdownAndRelease() == 3);
     assert(g_calls.size() == 9); // Successful releases stop; failed inputs use exactly two attempts.
     assert(injection::PendingReleaseCount() == 3);
-    AssertTaggedKeyboard(Sent(0, 0), 0x11, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
-    AssertTaggedKeyboard(Sent(1, 0), 0x1F, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
-    AssertTaggedKeyboard(Sent(2, 0), 0x1E, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
-    AssertTaggedKeyboard(Sent(3, 0), 0x20, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
-    AssertTaggedKeyboard(Sent(5, 0), 0x39, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(0, 0), 0x11, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(1, 0), 0x1F, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(2, 0), 0x1E, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(3, 0), 0x20, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
+    AssertScanCodeKeyboard(Sent(5, 0), 0x39, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP);
     assert(Sent(7, 0).type == INPUT_MOUSE);
     assert(Sent(7, 0).mi.dwFlags == MOUSEEVENTF_LEFTUP);
-    assert(Sent(7, 0).mi.dwExtraInfo == injection::kInjectedInputMarker);
+    assert(Sent(7, 0).mi.dwExtraInfo == 0);
 }
 
 void TestGuardedFailsafeNeverReleasesIntoRejectedTarget() {
@@ -234,6 +268,7 @@ void TestBackendIsSerializedAcrossThreads() {
 } // namespace
 
 int main() {
+    TestNativeDispatchAndUnavailableFallback();
     TestGeneratedEventsAndExactResults();
     TestReconcileIgnoresNormalHeldInputs();
     TestPartialKeyUpTracksAndReconcilesWithBoundedRetries();

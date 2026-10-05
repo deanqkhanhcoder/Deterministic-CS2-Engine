@@ -311,8 +311,9 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode < 0) return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
 
     auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
-    if ((info->flags & LLKHF_INJECTED) ||
-        info->dwExtraInfo == injection::kInjectedInputMarker) {
+    // Windows sets this bit for both SendInput paths. One bit test also handles
+    // delayed hook delivery; a call-window flag could miss it or drop real keys.
+    if (info->flags & LLKHF_INJECTED) {
         return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
     }
 
@@ -539,7 +540,8 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (info->flags & LLMHF_INJECTED) {
         return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
     }
-    if (info->dwExtraInfo == injection::kInjectedInputMarker) {
+    // Kernel-injected mouse input follows the same single-test fast path.
+    if (info->flags & LLMHF_INJECTED) {
         return CallNextHookEx(s_mouseHook, nCode, wParam, lParam);
     }
 
