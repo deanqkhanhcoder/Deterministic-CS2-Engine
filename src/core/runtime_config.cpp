@@ -73,6 +73,8 @@ RuntimeConfig Get() {
 
 RuntimeConfig Sanitize(const RuntimeConfig& newCfg) {
     RuntimeConfig validated = newCfg;
+    if (validated.socdMode != SocdMode::FULL && validated.socdMode != SocdMode::HUMANIZED &&
+        validated.socdMode != SocdMode::OFF) validated.socdMode = SocdMode::OFF;
 
     const auto clampFinite = [](double value, double minimum, double maximum) {
         if (!std::isfinite(value)) return minimum;

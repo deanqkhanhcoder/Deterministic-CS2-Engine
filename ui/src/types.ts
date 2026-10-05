@@ -14,7 +14,10 @@ export interface BrakeProfile {
   accuracyThreshold: number;
 }
 
+export enum SocdMode { FULL = 0, HUMANIZED = 1, OFF = 2 }
+
 export interface RuntimeConfig {
+  socdMode: SocdMode;
   quickTapMs: number;
   maxScaleMs: number;
   crouchMult: number;
@@ -53,6 +56,7 @@ export interface RuntimeConfig {
 }
 
 export interface TelemetryData {
+  injection_path: 'ntuser' | 'user32';
   runtimeState: EngineState;
   suspended: boolean;
   axisStateX: number;

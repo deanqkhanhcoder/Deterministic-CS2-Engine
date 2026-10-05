@@ -57,7 +57,17 @@ static void ReconcileLogicalStateFromPhysical(InjectionBatch& batch) {
     // 1. Re-sync Bhop if Space is physically held
     bhop::ForceSpaceSync(s_state.spacePhys);
 
+    if (rcfg::Get().socdMode == SocdMode::OFF) {
+        TrackNativeMovement(batch.expectedTarget);
+        s_state.axisState[0] = s_state.axisState[1] = AxisState::None;
+        ResolveAxis(Axis::X, batch);
+        ResolveAxis(Axis::Y, batch);
+        return;
+    }
+
     // 2. Re-sync WASD
+    CancelSocdTransition(Axis::X);
+    CancelSocdTransition(Axis::Y);
     for (int i = 0; i < 4; ++i) {
         Key k = static_cast<Key>(i);
         if (s_state.phys[i]) {
@@ -136,22 +146,24 @@ void RebuildState() {
 }
 
 void ReconcileInternal(bool suspending, InjectionBatch& batch) {
+    CancelSocdTransition(Axis::X);
+    CancelSocdTransition(Axis::Y);
     if (suspending) {
 
         s_state.axisState[0] = s_state.axisState[1] = AxisState::None;
+        for (auto& native : s_state.nativeLogical) native = false;
     }
     for (int i = 0; i < 4; ++i) {
         Key k = static_cast<Key>(i);
         timing::CancelTimer(k);
         s_state.expectedTimerId[ki(k)] = 0;
+        s_state.expectedTimerTarget[ki(k)] = {};
         if (suspending && s_state.logical[i]) {
             batch.push(k, false);
             s_state.logical[i] = false;
         }
     }
-    if (suspending) {
-        ResolveAxis(Axis::X, batch); ResolveAxis(Axis::Y, batch);
-    }
+    // Resume/focus rebuild resolves physical keys; cleanup must not press them again.
 }
 
 

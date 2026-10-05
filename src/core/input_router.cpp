@@ -48,6 +48,7 @@ void HandleKeyDown(Key k, bool routeSemantic,
         // --- PHYSICAL LAYER (Always Tracked) ---
         if (s_state.phys[ki_k]) return; // Already physically down
         s_state.phys[ki_k]     = true;
+        s_state.socdLastKey[ai(ax)] = k;
         s_state.downTimeUs[ki_k] = nowUs;
 
         // A pending expectedTimerId means the macro itself is holding this key
@@ -63,7 +64,12 @@ void HandleKeyDown(Key k, bool routeSemantic,
         }
 
         // --- SEMANTIC ROUTING LAYER ---
-        if (!routeSemantic) return;
+        if (!routeSemantic) {
+            if (rcfg::Get().socdMode == SocdMode::OFF) TrackNativeMovement(dispatchTarget);
+            PublishEngineState();
+            _doNotify = true;
+            return;
+        }
 
         // Tap spam EMA decay
         int64_t lastDecayMs = s_state.mem.tapSpamLastDecayTimeMs[ki_k];
@@ -86,11 +92,12 @@ void HandleKeyDown(Key k, bool routeSemantic,
         s_state.walk.accumUs[ki_k]   = 0;
         s_state.walk.startTimeUs[ki_k] = s_state.walk.shiftDown ? nowUs : 0;
 
-        ResolveAxis(ax, batch);
+        if (rcfg::Get().socdMode == SocdMode::OFF) TrackNativeMovement(dispatchTarget);
+        ResolveAxis(ax, batch, true);
 
         AxisState curState = s_state.axisState[ai(ax)];
         if (curState != AxisState::Conflict) {
-            if (!s_state.logical[ki_k]) batch.push(k, true);
+            if (rcfg::Get().socdMode != SocdMode::OFF && !s_state.logical[ki_k]) batch.push(k, true);
             s_state.logical[ki_k] = true;
         }
         PublishEngineState();
@@ -145,8 +152,11 @@ void HandleKeyUp(Key k, bool routeSemantic,
         } else {
             int64_t heldUs         = nowUs - s_state.downTimeUs[ki_k];
             s_state.heldDurUs[ki_k] = heldUs;
+            CancelSocdTransition(ax);
             s_state.phys[ki_k]     = false;
             s_state.downTimeUs[ki_k] = 0;
+
+            if (rcfg::Get().socdMode == SocdMode::OFF) TrackNativeMovement(dispatchTarget);
 
             // --- SEMANTIC ROUTING LAYER ---
             if (routeSemantic) {
@@ -165,11 +175,10 @@ void HandleKeyUp(Key k, bool routeSemantic,
                 // Macro-held brake on this key (see HandleKeyDown): leave it
                 // held; its timer releases it after the full simulated hold.
                 const bool macroBrakePending = s_state.logical[ki_k] &&
-                    s_state.expectedTimerId[ki_k] != 0 &&
-                    s_state.axisState[ai(ax)] != AxisState::Conflict;
+                    s_state.expectedTimerId[ki_k] != 0;
 
                 bool strafed = macroBrakePending;
-                if (!macroBrakePending && reason == ReleaseReason::Normal && !s_state.phys[ki_opp]) {
+                if (!macroBrakePending && !s_state.phys[ki_opp]) {
                     strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch);
                 }
 

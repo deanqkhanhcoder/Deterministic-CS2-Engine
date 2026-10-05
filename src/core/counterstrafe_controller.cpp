@@ -14,13 +14,24 @@
 
 namespace engine {
 
+static std::atomic<std::uint32_t> s_counterHeldMask{0};
+static target_platform::detail::TargetPublicationStore s_counterTargets[4];
+bool IsCounterStrafeHoldingKey(Key key, const target_platform::TargetIdentity& target) {
+    return ki(key) < 4 && (s_counterHeldMask.load(std::memory_order_acquire) & (1u << ki(key))) != 0 &&
+        s_counterTargets[ki(key)].Load().target == target;
+}
+
 void CommitLogicalStateFromInjection() {
     const std::uint32_t heldMask = injection::HeldMovementMask();
     std::lock_guard<std::mutex> lock(s_stateMutex);
-    for (int i = 0; i < 4; ++i) {
-        s_state.logical[i] = (heldMask & (1u << i)) != 0;
-    }
+    for (int i = 0; i < 4; ++i)
+        s_state.logical[i] = s_state.nativeLogical[i] || (heldMask & (1u << i)) != 0;
+    s_counterHeldMask.store(heldMask, std::memory_order_release);
+    UpdateVelocityWishFromLogicalState();
+    PublishEngineState();
+}
 
+void UpdateVelocityWishFromLogicalState() {
     // Velocity tracking: close the interval under the previous wish, then
     // open a new one for the keys now held in the game. Opposing keys held
     // together cancel to wish 0 (friction only), as in Source.
@@ -35,7 +46,18 @@ void CommitLogicalStateFromInjection() {
                (timing::NowMs() - s_state.walk.shiftReleaseTimeMs) < rcfg::Get().walkMemoryMs) {
         s_state.vel.speedScale = 0.52;
     }
-    PublishEngineState();
+}
+
+void TrackNativeMovement(const target_platform::TargetIdentity& target) {
+    movement::AdvanceVelocity(s_state.vel, timing::NowUs(), rcfg::Get());
+    const bool active = !s_state.suspended && target_platform::IsExpectedTargetActive(target);
+    const auto heldMask = injection::HeldMovementMask();
+    for (int i = 0; i < 4; ++i) {
+        s_state.nativeLogical[i] = active && s_state.phys[i];
+        s_state.logical[i] = s_state.nativeLogical[i] || (heldMask & (1u << i)) != 0;
+    }
+    UpdateVelocityWishFromLogicalState();
+
 }
 
 void FlushAndCommitLogicalState(InjectionBatch& batch) {
@@ -51,8 +73,21 @@ UINT ReconcilePendingOutput(
     return released;
 }
 
-void ResolveAxis(Axis ax, InjectionBatch& batch) {
+void CancelSocdTransition(Axis ax) {
+    auto& timerId = s_state.socdReleaseTimerId[ai(ax)];
+    if (timerId == 0) return;
+    for (Key key : {keymap::AxisPosKey[ai(ax)], keymap::AxisNegKey[ai(ax)]}) {
+        if (s_state.expectedTimerId[ki(key)] != timerId) continue;
+        timing::CancelTimer(key);
+        s_state.expectedTimerId[ki(key)] = 0;
+        s_state.expectedTimerTarget[ki(key)] = {};
+    }
+    timerId = 0;
+}
+
+void ResolveAxis(Axis ax, InjectionBatch& batch, bool onPhysicalPress) {
     int ai_a = ai(ax);
+    const auto mode = rcfg::Get().socdMode;
     Key posKey = keymap::AxisPosKey[ai_a];
     Key negKey = keymap::AxisNegKey[ai_a];
 
@@ -67,13 +102,38 @@ void ResolveAxis(Axis ax, InjectionBatch& batch) {
     else if (negDown)             newState = AxisState::Negative;
     else                          newState = AxisState::None;
 
-    if (newState == prevState) return;
+    if (newState == prevState && !(onPhysicalPress && newState == AxisState::Conflict)) return;
 
+    CancelSocdTransition(ax);
     s_state.axisState[ai_a] = newState;
     s_state.generation[ai_a]++;
 
     if (newState == AxisState::Conflict) {
-        NeutralizeAxis(ax, batch);
+        // A physical second press owns this transition. Repeats/ticks return
+        // above; stale brake timers must never restore an unprioritized key.
+        for (Key key : {posKey, negKey}) {
+            timing::CancelTimer(key);
+            s_state.expectedTimerId[ki(key)] = 0;
+            s_state.expectedTimerTarget[ki(key)] = {};
+        }
+        if (mode == SocdMode::OFF) return; // Preserve both native physical edges.
+        const Key winner = s_state.socdLastKey[ai_a];
+        const Key loser = keymap::Opposite[ki(winner)];
+        if (mode == SocdMode::HUMANIZED && onPhysicalPress && s_state.logical[ki(loser)]) {
+            const uint64_t timerId = timing::ScheduleTimerUs(loser, 8000);
+            if (timerId != 0) {
+                s_state.socdReleaseTimerId[ai_a] = timerId;
+                s_state.expectedTimerId[ki(loser)] = timerId;
+                s_state.expectedTimerTarget[ki(loser)] = batch.expectedTarget;
+            }
+            // Timer admission failure falls back to immediate last-key priority.
+        }
+        if (s_state.socdReleaseTimerId[ai_a] == 0) {
+            if (s_state.logical[ki(loser)]) batch.push(loser, false);
+            s_state.logical[ki(loser)] = false;
+        }
+        if (!s_state.logical[ki(winner)]) batch.push(winner, true);
+        s_state.logical[ki(winner)] = true;
         return;
     }
 
@@ -89,7 +149,7 @@ void ResolveAxis(Axis ax, InjectionBatch& batch) {
         s_state.mem.lastDir[ai_a] = (newState == AxisState::Positive) ? AxisDir::Positive : AxisDir::Negative;
         s_state.mem.lastConflictExitTimeMs[ai_a] = timing::NowMs();
 
-        batch.push(survKey, true);
+        if (mode != SocdMode::OFF && !s_state.logical[ki_s]) batch.push(survKey, true);
         s_state.logical[ki_s] = true;
         return;
     }
@@ -136,45 +196,6 @@ void NeutralizeAxis(Axis ax, InjectionBatch& batch) {
         }
     }
 }
-
-struct NoiseGenerator {
-    uint64_t state[2];
-
-    NoiseGenerator() {
-        LARGE_INTEGER t;
-        QueryPerformanceCounter(&t);
-        state[0] = t.QuadPart ^ 0x9E3779B97F4A7C15ULL;
-        state[1] = GetCurrentThreadId() ^ 0xBF58476D1CE4E5B9ULL;
-    }
-
-    uint64_t next() {
-        uint64_t s1 = state[0];
-        const uint64_t s0 = state[1];
-        state[0] = s0;
-        s1 ^= s1 << 23;
-        state[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
-        return state[1] + s0;
-    }
-
-    int next_jitter(int min_us, int max_us) {
-        if (min_us >= max_us) return min_us;
-        return min_us + (next() % (max_us - min_us + 1));
-    }
-
-    double next_double() {
-        return (next() >> 11) * (1.0 / 9007199254740992.0);
-    }
-
-    double next_gaussian(double mean, double stddev) {
-        double u1 = next_double();
-        double u2 = next_double();
-        if (u1 <= 1e-15) u1 = 1e-15;
-        double z0 = std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * 3.14159265358979323846 * u2);
-        return z0 * stddev + mean;
-    }
-};
-
-static thread_local NoiseGenerator s_noise;
 
 // Telemetry globals for last brake event
 alignas(64) std::atomic<int64_t> g_lastBrakeUs{0};
@@ -296,23 +317,9 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
 }
 
 bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch) {
-    int ki_c = ki(counterKey);
-    if (s_state.phys[ki_c]) {
-        DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: %s phys held", keymap::KeyName[ki_c]);
-#if MARCO_ENABLE_FORENSIC
-        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CANCELLED, GetCurrentThreadId(), timing::NowUs(), 1 /*OppositePhys*/, (uint32_t)ki_c, (uint32_t)heldUs, true };
-        telemetry::g_forensicBuffer.Push(ev);
-#endif
-        return false;
-    }
-    if (s_state.axisState[ai(ax)] == AxisState::Conflict) {
-        DLOG_TRACE(Runtime, "AutoCounterStrafe ABORT: Axis %d in Conflict", ai(ax));
-#if MARCO_ENABLE_FORENSIC
-        telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::COUNTERSTRAFE_CONFLICT, GetCurrentThreadId(), timing::NowUs(), 2 /*Conflict*/, (uint32_t)ai(ax), (uint32_t)heldUs, true };
-        telemetry::g_forensicBuffer.Push(ev);
-#endif
-        return false;
-    }
+    const int ki_c = ki(counterKey);
+    if (s_state.phys[ki_c] || s_state.suspended ||
+        !target_platform::IsExpectedTargetActive(batch.expectedTarget)) return false;
     const RuntimeConfig& rc = rcfg::Get();
     // No min-tap guard: a short tap while already moving fast still needs a
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
@@ -326,7 +333,7 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
     // same injection batch, ensuring zero overlap (no friction-only waste tick).
     // If a non-zero overlap is configured, an overlap release timer is scheduled.
     int64_t effectiveOverlapUs = movement::ClampCounterOverlapUs(
-        profile.overlap_duration_us, effectiveBrakeUs);
+        s_state.logical[ki(relKey)] ? profile.overlap_duration_us : 0, effectiveBrakeUs);
 
     uint64_t overlapTimerId = 0;
     if (effectiveOverlapUs > 0) {
@@ -355,6 +362,8 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
     }
 
     if (!s_state.logical[ki_c]) {
+        if ((s_counterHeldMask.load(std::memory_order_acquire) & (1u << ki_c)) == 0)
+            s_counterTargets[ki_c].Store(nullptr, batch.expectedTarget);
         batch.push(counterKey, true);
         s_state.logical[ki_c] = true;
     }

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -76,6 +77,7 @@ UINT WINAPI FakeFallbackDispatch(UINT count, LPINPUT inputs, int size) {
 void TestNativeDispatchAndUnavailableFallback() {
     INPUT inputs[2]{};
     SetInjectionDispatchForTesting(FakeNativeDispatch, FakeFallbackDispatch);
+    assert(std::string(g_injection_path.load(std::memory_order_acquire)) == "ntuser");
     SetLastError(123);
     InitializeInjectionDispatch();
     assert(GetLastError() == 123);
@@ -86,6 +88,7 @@ void TestNativeDispatchAndUnavailableFallback() {
     }
     assert(g_nativeCalls == 3 && g_fallbackCalls == 0);
     SetInjectionDispatchForTesting(nullptr, FakeFallbackDispatch);
+    assert(std::string(g_injection_path.load(std::memory_order_acquire)) == "user32");
     assert(MarcoSendInput(2, inputs, sizeof(INPUT)) == 1);
     assert(GetLastError() == ERROR_INVALID_PARAMETER && g_fallbackCalls == 1);
 }

@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { 
+import {
   Activity, Shield, Zap, RefreshCw, Power,
-  Crosshair, Sliders, Check, Save
+  Crosshair, Sliders, Check, Save, Sun, Moon
 } from 'lucide-react';
-import { RuntimeConfig, TelemetryData, BrakeProfile, EngineState } from './types';
+import { RuntimeConfig, TelemetryData, BrakeProfile, EngineState, SocdMode } from './types';
 import TelemetryDashboard from './TelemetryDashboard';
+import { initialTheme, applyTheme } from './theme';
+import type { Theme } from './theme';
 import { appendTelemetry } from './telemetry';
 import type { TraceSample } from './telemetry';
 
@@ -12,6 +14,7 @@ const DEFAULT_PORT = 47650;
 const PROFILE_NAMES = ['Disabled', 'Rifle (AK/M4)', 'Pistol (USP/Glock)', 'Sniper (AWP/Scout)', 'SMG (MP9/Mac10)'];
 
 const DEFAULT_CONFIG: RuntimeConfig = {
+  socdMode: SocdMode.FULL,
   quickTapMs: 30, maxScaleMs: 80, crouchMult: 0.75, latencyMarginMs: 6, minStopMs: 4, lutMaxMs: 350,
   walkMemoryMs: 130, walkRatioSkip: 0.65, walkRatioLight: 0.35, minWalkStopMs: 15, walkMaxStopMs: 22,
   decayK: 0.005, dirChangePenaltyMs: 60, tapSpamWindowMs: 60, stopStrengthMin: 0.25,
@@ -31,6 +34,25 @@ const DEFAULT_CONFIG: RuntimeConfig = {
 };
 
 export default function App() {
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const followSystem = () => {
+      let saved: string | null = null;
+      try { saved = localStorage.getItem('marco_theme'); } catch { /* Keep system fallback. */ }
+      if (saved !== 'light' && saved !== 'dark') setTheme(media.matches ? 'dark' : 'light');
+    };
+    media.addEventListener('change', followSystem);
+    return () => media.removeEventListener('change', followSystem);
+  }, []);
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('marco_theme', next); } catch { /* Still switch for this session. */ }
+    setTheme(next);
+  };
   const [token, setToken] = useState<string>(() => {
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get('token') || localStorage.getItem('marco_token') || '';
@@ -93,7 +115,7 @@ export default function App() {
             }
             return next;
           });
-        } else if (key !== 'activeBrakeProfileIndex' && key !== 'safeModeEnabled' &&
+        } else if (key !== 'activeBrakeProfileIndex' && key !== 'safeModeEnabled' && key !== 'socdMode' &&
             JSON.stringify(prev[key]) !== JSON.stringify(baseline[key])) {
           Object.assign(merged, { [key]: prev[key] });
         }
@@ -205,6 +227,10 @@ export default function App() {
     { activeProfileIndex: idx }, `Switched Weapon Profile: ${PROFILE_NAMES[idx]}`,
     { ...config, activeBrakeProfileIndex: idx }, false);
 
+  const selectSocdMode = (mode: SocdMode) => mutateConfig('/api/config',
+    { socdMode: mode }, `SOCD mode: ${SocdMode[mode]}`,
+    { ...config, socdMode: mode }, false);
+
   const engineStopped = pendingPower ?? telemetry?.suspended ?? true;
   const engineRunning = !engineStopped && connected && telemetry?.runtimeState !== EngineState.FailSafe;
 
@@ -248,25 +274,30 @@ export default function App() {
   const activeWeapon = config.brakeProfiles[selectedProfileIndex] || config.brakeProfiles[1];
 
   return (
-    <div className="min-h-screen bg-[#0c0e14] text-slate-200 flex flex-col font-sans selection:bg-cyan-500/20">
+    <div className="min-h-screen bg-[var(--bg)] text-[var(--fg)] flex flex-col font-sans">
       {/* ── Precision Utility Header ── */}
-      <header className="border-b border-[#1b202e] bg-[#121622] px-5 py-2.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
-        <div className="flex items-center gap-3">
-          <div className="px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-mono font-bold text-xs tracking-wider">
-            MARCO
+      <header className="border-b border-[var(--border)] bg-[var(--card)] px-6 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50">
+        <div className="flex items-center gap-4">
+          <div className="px-2 py-0.5 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-[var(--fg)] font-bold text-xs">
+            Marco
           </div>
-          <span className="text-xs font-mono font-semibold tracking-wide text-slate-300">
-            DETERMINISTIC CS2 MOTION ENGINE
+          <span className="text-xs font-medium text-[var(--fg)]">
+            CS2 motion engine
           </span>
-          <span className="text-[11px] text-slate-500 font-mono">v28</span>
+          <span className="text-xs text-[var(--muted)]">v29</span>
         </div>
 
         {/* Global Action Bar */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-4">
+          <button type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-xs font-medium hover:bg-[var(--bg)]">
+            {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {theme === 'dark' ? 'Light theme' : 'Dark theme'}
+          </button>
           {/* CS2 Target Status */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#0c0e14] border border-[#1b202e] text-[11px] font-mono">
-            <span className={`w-2 h-2 rounded-full ${telemetry?.targetActive ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-            <span className={telemetry?.targetActive ? 'text-slate-200 font-medium' : 'text-slate-500'}>
+          <div className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-xs">
+            <span className={`w-2 h-2 rounded-full ${telemetry?.targetActive ? 'bg-[var(--ok)]' : 'bg-[var(--muted)]'}`} />
+            <span className={telemetry?.targetActive ? 'text-[var(--fg)] font-medium' : 'text-[var(--muted)]'}>
               {telemetry?.targetName || 'CS2 Process'}
             </span>
           </div>
@@ -276,14 +307,14 @@ export default function App() {
             onClick={toggleSuspend}
             aria-pressed={!engineStopped}
             disabled={!connected || pendingPower !== null}
-            className={`px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1.5 border transition ${
+            className={`px-4 py-2 rounded-lg text-xs  font-medium flex items-center gap-1.5 border transition ${
               !engineRunning
-                ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20' 
-                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                ? 'state-danger'
+                : 'state-ok'
             }`}
           >
-            <Power className={`w-3 h-3 ${engineRunning ? 'drop-shadow-[0_0_4px_currentColor]' : ''}`} />
-            {engineRunning ? 'RUNNING' : 'STOPPED'}
+            <Power className="w-4 h-4" />
+            {engineRunning ? 'Running' : 'Stopped'}
           </button>
 
           {/* Safe Mode Toggle */}
@@ -291,14 +322,14 @@ export default function App() {
             onClick={toggleSafeMode}
             aria-pressed={config.safeModeEnabled}
             disabled={!connected || saving}
-            className={`px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1.5 border transition ${
-              config.safeModeEnabled 
-                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20' 
-                : 'bg-[#1b202e] text-slate-400 border-transparent hover:text-slate-200'
+            className={`px-4 py-2 rounded-lg text-xs  font-medium flex items-center gap-1.5 border transition ${
+              config.safeModeEnabled
+                ? 'state-warning'
+                : 'bg-[var(--bg)] text-[var(--muted)] border-transparent hover:text-[var(--fg)]'
             }`}
           >
             <Shield className="w-3 h-3" />
-            SAFE MODE: {config.safeModeEnabled ? 'ON' : 'OFF'}
+            Safe mode: {config.safeModeEnabled ? 'On' : 'Off'}
           </button>
 
           {/* Revert Snapshot Button */}
@@ -306,15 +337,15 @@ export default function App() {
             onClick={revertToSnapshot}
             disabled={!connected || saving}
             title="Restore un-clamped snapshot configuration"
-            className="px-2.5 py-1 rounded text-[11px] font-mono font-semibold flex items-center gap-1 bg-[#1b202e] hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+            className="px-4 py-2 rounded-lg text-xs font-medium flex items-center gap-1 bg-[var(--bg)] hover:bg-[var(--bg)] text-[var(--fg)] border border-[var(--border)] transition"
           >
-            <RefreshCw className="w-3 h-3 text-cyan-400" />
-            REVERT SNAPSHOT
+            <RefreshCw className="w-3 h-3 text-[var(--fg)]" />
+            Revert snapshot
           </button>
 
           {/* Connection Pill */}
-          <div className="flex items-center gap-1.5 pl-2 border-l border-[#1b202e] text-[11px] font-mono text-slate-400">
-            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+          <div className="flex items-center gap-1.5 pl-2 border-l border-[var(--border)] text-xs text-[var(--muted)]">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-[var(--ok)]' : 'bg-[var(--danger)]'}`} />
             <span>127.0.0.1:{DEFAULT_PORT}</span>
           </div>
         </div>
@@ -322,30 +353,31 @@ export default function App() {
 
       {/* ── Status Toast ── */}
       {statusMsg && (
-        <div className="fixed bottom-4 right-4 z-50 max-w-[calc(100vw-2rem)] rounded-lg bg-slate-900 border border-slate-700 px-4 py-3 text-xs font-mono text-cyan-300 flex items-center gap-4 shadow-lg">
+        <div className="fixed bottom-4 right-4 z-50 max-w-[calc(100vw-2rem)] rounded-lg bg-[var(--card)] border border-[var(--border)] px-4 py-3 text-xs text-[var(--fg)] flex items-center gap-4 shadow-lg">
           <span role="status">{statusMsg}</span>
-          <button aria-label="Dismiss notification" onClick={() => setStatusMsg('')} className="text-slate-400 hover:text-white">✕</button>
+          <button aria-label="Dismiss notification" onClick={() => setStatusMsg('')} className="text-[var(--muted)] hover:text-[var(--fg)]">✕</button>
         </div>
       )}
 
       {/* ── Tab Bar ── */}
-      <div className="border-b border-[#1b202e] bg-[#0f121a] px-5 flex gap-4 overflow-x-auto">
+      <div className="border-b border-[var(--border)] bg-[var(--card)] px-6 flex gap-4 overflow-x-auto">
         {[
-          { id: 'telemetry', label: 'TELEMETRY HUD', icon: Activity },
-          { id: 'profiles', label: 'WEAPON PROFILES & TUNING', icon: Crosshair },
-          { id: 'bhop', label: 'BUNNYHOP AUTOMATION', icon: Zap },
-          { id: 'physics', label: 'PHYSICS PARAMETERS', icon: Sliders }
+          { id: 'telemetry', label: 'Telemetry HUD', icon: Activity },
+          { id: 'profiles', label: 'Weapon profiles', icon: Crosshair },
+          { id: 'bhop', label: 'Bunnyhop', icon: Zap },
+          { id: 'physics', label: 'Physics parameters', icon: Sliders }
         ].map(tab => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`py-2.5 whitespace-nowrap text-xs font-mono font-semibold flex items-center gap-2 border-b-2 transition ${
-                active 
-                  ? 'border-cyan-400 text-cyan-400' 
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              onClick={() => setActiveTab(tab.id as typeof activeTab)}
+              aria-current={active ? 'page' : undefined}
+              className={`py-4 whitespace-nowrap text-xs  font-medium flex items-center gap-2 border-b-2 transition ${
+                active
+                  ? 'border-[var(--accent)] text-[var(--fg)]'
+                  : 'border-transparent text-[var(--muted)] hover:text-[var(--fg)]'
               }`}
             >
               <Icon className="w-3.5 h-3.5" />
@@ -356,8 +388,8 @@ export default function App() {
       </div>
 
       {/* ── Main Utility Container ── */}
-      <main className="p-5 flex-1 max-w-7xl mx-auto w-full space-y-5">
-        
+      <main className="px-6 py-4 flex-1 max-w-7xl mx-auto w-full space-y-6">
+
         {/* ════ TAB 1: TELEMETRY HUD ════ */}
         {activeTab === 'telemetry' && (
           <TelemetryDashboard telemetry={telemetry} history={traceHistory} connected={connected}
@@ -368,11 +400,11 @@ export default function App() {
         {activeTab === 'profiles' && (
           <div className="space-y-4">
             {/* Weapon Selector Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                { idx: 1, name: 'RIFLE', desc: 'AK-47 / M4A4 / M4A1-S', threshold: 34.0, dur: '109 ms' },
-                { idx: 2, name: 'PISTOL', desc: 'USP-S / Glock / Deagle', threshold: 34.0, dur: '109 ms' },
-                { idx: 3, name: 'SNIPER', desc: 'AWP / SSG 08', threshold: 17.0, dur: '125 ms' },
+                { idx: 1, name: 'Rifle', desc: 'AK-47 / M4A4 / M4A1-S', threshold: 34.0, dur: '109 ms' },
+                { idx: 2, name: 'Pistol', desc: 'USP-S / Glock / Deagle', threshold: 34.0, dur: '109 ms' },
+                { idx: 3, name: 'Sniper', desc: 'AWP / SSG 08', threshold: 17.0, dur: '125 ms' },
                 { idx: 4, name: 'SMG', desc: 'MP9 / MAC-10 / MP7', threshold: 34.0, dur: '109 ms' }
               ].map(w => {
                 const isActive = config.activeBrakeProfileIndex === w.idx;
@@ -384,26 +416,26 @@ export default function App() {
                     disabled={!connected || saving}
                     key={w.idx}
                     onClick={() => selectWeaponProfile(w.idx)}
-                    className={`p-3.5 rounded-lg border cursor-pointer transition ${
-                      isActive 
-                        ? 'bg-emerald-500/10 border-emerald-500/50 text-slate-100'
+                    className={`p-4 rounded-lg border shadow-sm cursor-pointer transition ${
+                      isActive
+                        ? 'state-ok'
                         : isSelected
-                          ? 'bg-[#181d2c] border-slate-600 text-slate-200'
-                          : 'bg-[#121622] border-[#1b202e] text-slate-400 hover:border-slate-700'
+                          ? 'bg-[var(--bg)] border-[var(--accent)] text-[var(--fg)]'
+                          : 'bg-[var(--card)] border-[var(--border)] text-[var(--muted)] hover:border-[var(--border)]'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-sm tracking-wide">{w.name}</span>
+                      <span className="font-medium text-sm">{w.name}</span>
                       {isActive && (
-                        <span className="text-[10px] font-mono text-emerald-400 font-bold flex items-center gap-1">
-                          <Check className="w-3 h-3" /> ACTIVE
+                        <span className="text-xs tone-ok font-bold flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Active
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-1">{w.desc}</p>
-                    <div className="flex justify-between items-center mt-3 text-[10px] font-mono text-slate-400">
-                      <span>Threshold: <strong className="text-slate-200">{config.brakeProfiles[w.idx].accuracyThreshold} u/s</strong></span>
-                      <span>Brake: <strong className="text-cyan-400">{w.dur}</strong></span>
+                    <p className="text-xs text-[var(--muted)] mt-1">{w.desc}</p>
+                    <div className="flex flex-wrap gap-2 justify-between items-center mt-4 text-xs text-[var(--muted)]">
+                      <span>Threshold: <strong className="text-[var(--fg)]">{config.brakeProfiles[w.idx].accuracyThreshold} u/s</strong></span>
+                      <span>Brake: <strong className="text-[var(--fg)]">{w.dur}</strong></span>
                     </div>
                   </button>
                 );
@@ -411,16 +443,16 @@ export default function App() {
             </div>
 
             {/* Profile Detail Tuner */}
-            <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-5 space-y-5">
-              <div className="flex items-center justify-between border-b border-[#1b202e] pb-3">
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-sm px-6 py-4 space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
                 <div>
-                  <div className="text-sm font-mono font-bold text-slate-200 flex items-center gap-2">
-                    <span>EDITING PROFILE: {PROFILE_NAMES[selectedProfileIndex]}</span>
-                    <span className="text-xs px-2 py-0.5 rounded bg-[#1b202e] text-cyan-400 font-mono">
-                      Target Accuracy: &le; {activeWeapon.accuracyThreshold.toFixed(1)} u/s
+                  <div className="text-sm font-medium text-[var(--fg)] flex flex-wrap items-center gap-2">
+                    <span>Editing profile: {PROFILE_NAMES[selectedProfileIndex]}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-lg bg-[var(--bg)] text-[var(--fg)]">
+                      Accuracy threshold: &le; {activeWeapon.accuracyThreshold.toFixed(1)} u/s
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                  <p className="text-xs text-[var(--muted)] mt-0.5">
                     Sub-tick deceleration simulation parameters aligned with Valve PM_Friction / Accelerate
                   </p>
                 </div>
@@ -429,28 +461,28 @@ export default function App() {
                 <button
                   onClick={resetProfile}
                   disabled={!connected || saving}
-                  className="px-3.5 py-1.5 border border-slate-600 hover:bg-slate-700 text-slate-300 font-mono font-semibold text-xs rounded transition disabled:opacity-50"
+                  className="px-4 py-2 border border-[var(--accent)] hover:bg-[var(--bg)] text-[var(--fg)] font-medium text-xs rounded-lg transition disabled:opacity-50"
                 >
-                  RESET DEFAULT
+                  Reset default
                 </button>
                 <button
                   onClick={saveConfig}
                   disabled={!connected || saving}
-                  className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
+                  className="px-4 py-2 bg-[var(--accent)] hover:opacity-90 text-[var(--accent-fg)] font-medium text-xs rounded-lg transition flex items-center gap-1.5"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  {saving ? 'SAVING...' : 'APPLY & SAVE (MARCO.INI)'}
+                  {saving ? 'Saving…' : 'Apply & save'}
                 </button>
                 </div>
               </div>
 
               {/* Sliders Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 font-mono text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 {/* Accuracy Threshold */}
-                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-300 font-medium">Accuracy Threshold:</span>
-                    <span className="text-cyan-400 font-bold">{activeWeapon.accuracyThreshold.toFixed(1)} u/s</span>
+                    <span className="text-[var(--fg)] font-medium">Accuracy threshold:</span>
+                    <span className="text-[var(--fg)] font-bold tabular-nums">{activeWeapon.accuracyThreshold.toFixed(1)} u/s</span>
                   </div>
                   <input
                     type="range"
@@ -458,21 +490,21 @@ export default function App() {
                     min="10"
                     max="60"
                     step="1"
-                    value={activeWeapon.accuracyThreshold}
+                    aria-label="Accuracy threshold" value={activeWeapon.accuracyThreshold}
                     onChange={(e) => updateProfileField('accuracyThreshold', parseFloat(e.target.value))}
-                    className="w-full accent-cyan-500"
+                    className="w-full accent-[var(--accent)]"
                   />
-                  <div className="text-[10px] text-slate-500 flex justify-between">
+                  <div className="text-xs text-[var(--muted)] flex justify-between">
                     <span>17.0 u/s (Sniper standard)</span>
                     <span>34.0 u/s (Rifle/Pistol standard)</span>
                   </div>
                 </div>
 
                 {/* Key Overlap Window */}
-                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-300 font-medium">Key Overlap Window:</span>
-                    <span className="text-cyan-400 font-bold">{activeWeapon.overlapDurationUs} µs</span>
+                    <span className="text-[var(--fg)] font-medium">Key overlap window:</span>
+                    <span className="text-[var(--fg)] font-bold tabular-nums">{activeWeapon.overlapDurationUs} µs</span>
                   </div>
                   <input
                     type="range"
@@ -480,20 +512,20 @@ export default function App() {
                     min="0"
                     max="8000"
                     step="500"
-                    value={activeWeapon.overlapDurationUs}
+                    aria-label="Key overlap window" value={activeWeapon.overlapDurationUs}
                     onChange={(e) => updateProfileField('overlapDurationUs', parseInt(e.target.value, 10))}
-                    className="w-full accent-cyan-500"
+                    className="w-full accent-[var(--accent)]"
                   />
-                  <div className="text-[10px] text-slate-500">
-                    Standard is 0 µs (zero overlap ensures instantaneous sub-tick counter-braking).
+                  <div className="text-xs text-[var(--muted)]">
+                    Auto Counter-Strafe uses this bounded overlap independently of SOCD mode.
                   </div>
                 </div>
 
                 {/* Brake Bias Multiplier */}
-                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-300 font-medium">Brake Bias Multiplier:</span>
-                    <span className="text-cyan-400 font-bold">{activeWeapon.brakeBiasMultiplier.toFixed(2)}x</span>
+                    <span className="text-[var(--fg)] font-medium">Brake bias multiplier:</span>
+                    <span className="text-[var(--fg)] font-bold tabular-nums">{activeWeapon.brakeBiasMultiplier.toFixed(2)}x</span>
                   </div>
                   <input
                     type="range"
@@ -501,20 +533,20 @@ export default function App() {
                     min="0.80"
                     max="1.30"
                     step="0.01"
-                    value={activeWeapon.brakeBiasMultiplier}
+                    aria-label="Brake bias multiplier" value={activeWeapon.brakeBiasMultiplier}
                     onChange={(e) => updateProfileField('brakeBiasMultiplier', parseFloat(e.target.value))}
-                    className="w-full accent-cyan-500"
+                    className="w-full accent-[var(--accent)]"
                   />
-                  <div className="text-[10px] text-slate-500">
+                  <div className="text-xs text-[var(--muted)]">
                     Standard is 1.00x (pure mathematical physics deceleration without arbitrary scaling).
                   </div>
                 </div>
 
                 {/* Momentum Memory */}
-                <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+                <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-300 font-medium">Momentum Memory:</span>
-                    <span className="text-cyan-400 font-bold">{activeWeapon.momentumMemoryMs.toFixed(1)} ms</span>
+                    <span className="text-[var(--fg)] font-medium">Momentum memory:</span>
+                    <span className="text-[var(--fg)] font-bold tabular-nums">{activeWeapon.momentumMemoryMs.toFixed(1)} ms</span>
                   </div>
                   <input
                     type="range"
@@ -522,11 +554,11 @@ export default function App() {
                     min="10"
                     max="60"
                     step="1"
-                    value={activeWeapon.momentumMemoryMs}
+                    aria-label="Momentum memory" value={activeWeapon.momentumMemoryMs}
                     onChange={(e) => updateProfileField('momentumMemoryMs', parseFloat(e.target.value))}
-                    className="w-full accent-cyan-500"
+                    className="w-full accent-[var(--accent)]"
                   />
-                  <div className="text-[10px] text-slate-500">
+                  <div className="text-xs text-[var(--muted)]">
                     Memory horizon across rapid A-D alternating strafes (Rifle: 35ms, Sniper: 40ms).
                   </div>
                 </div>
@@ -537,42 +569,42 @@ export default function App() {
 
         {/* ════ TAB 3: BUNNYHOP AUTOMATION ════ */}
         {activeTab === 'bhop' && (
-          <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#1b202e] pb-3">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-sm px-6 py-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
               <div>
-                <span className="text-sm font-mono font-bold text-slate-200">BUNNYHOP AUTOMATION</span>
-                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                <span className="text-sm font-medium text-[var(--fg)]">Bunnyhop automation</span>
+                <p className="text-xs text-[var(--muted)] mt-0.5">
                   Sub-tick scroll wheel pulse generation and cadence alignment
                 </p>
               </div>
               <button
                 onClick={saveConfig}
                 disabled={!connected || saving}
-                className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
+                className="px-4 py-2 bg-[var(--accent)] hover:opacity-90 text-[var(--accent-fg)] font-medium text-xs rounded-lg transition flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
-                {saving ? 'SAVING...' : 'SAVE TO MARCO.INI'}
+                {saving ? 'Saving…' : 'Save to marco.ini'}
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between p-3 bg-[#0c0e14] rounded border border-[#1b202e]">
-                  <span className="text-slate-300">Bhop Subsystem:</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-[var(--bg)] rounded-lg border border-[var(--border)]">
+                  <span className="text-[var(--fg)]">Bhop subsystem:</span>
                   <button
                     onClick={() => setConfig(prev => ({ ...prev, bhopEnabled: !prev.bhopEnabled }))}
-                    className={`px-3 py-1 rounded font-bold ${
-                      config.bhopEnabled 
-                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 
-                        : 'bg-slate-800 text-slate-400'
+                    className={`px-3 py-1 rounded-lg font-bold ${
+                      config.bhopEnabled
+                        ? 'state-ok border'
+                        : 'bg-[var(--bg)] text-[var(--muted)]'
                     }`}
                   >
-                    {config.bhopEnabled ? 'ENABLED' : 'DISABLED'}
+                    {config.bhopEnabled ? 'Enabled' : 'Disabled'}
                   </button>
                 </div>
 
                 <div className="space-y-1.5">
-                  <span className="text-slate-400 text-[11px]">Execution Cadence Mode:</span>
+                  <span className="text-[var(--muted)] text-xs">Execution cadence mode:</span>
                   <div className="grid grid-cols-2 gap-2">
                     {[
                       { id: 1, name: '1: Legit' },
@@ -583,10 +615,10 @@ export default function App() {
                       <button
                         key={m.id}
                         onClick={() => setConfig(prev => ({ ...prev, bhopMode: m.id }))}
-                        className={`p-2.5 rounded border text-left transition ${
+                        className={`p-4 rounded-lg border text-left transition ${
                           config.bhopMode === m.id
-                            ? 'bg-cyan-500/10 border-cyan-500/60 text-cyan-300 font-bold'
-                            : 'bg-[#0c0e14] border-[#1b202e] text-slate-400 hover:text-slate-200'
+                            ? 'bg-[var(--bg)] border-[var(--accent)] text-[var(--fg)] font-medium'
+                            : 'bg-[var(--bg)] border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]'
                         }`}
                       >
                         {m.name}
@@ -596,11 +628,11 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <div className="bg-[#0c0e14] border border-[#1b202e] p-3 rounded space-y-2">
+              <div className="space-y-4">
+                <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-slate-300">Airborne Lock Delay:</span>
-                    <span className="text-cyan-400 font-bold">{config.airborneDelayMs} ms</span>
+                    <span className="text-[var(--fg)]">Airborne lock delay:</span>
+                    <span className="text-[var(--fg)] font-bold tabular-nums">{config.airborneDelayMs} ms</span>
                   </div>
                   <input
                     type="range"
@@ -608,16 +640,16 @@ export default function App() {
                     min="100"
                     max="600"
                     step="10"
-                    value={config.airborneDelayMs}
+                    aria-label="Airborne lock delay" value={config.airborneDelayMs}
                     onChange={(e) => setConfig(prev => ({ ...prev, airborneDelayMs: parseInt(e.target.value, 10) }))}
-                    className="w-full accent-cyan-500"
+                    className="w-full accent-[var(--accent)]"
                   />
                 </div>
 
-                <div className="bg-[#0c0e14] border border-[#1b202e] p-3 rounded space-y-2">
+                <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-slate-300">Scroll Burst Gap:</span>
-                    <span className="text-cyan-400 font-bold">{config.scrollBurstGapMs} ms</span>
+                    <span className="text-[var(--fg)]">Scroll burst gap:</span>
+                    <span className="text-[var(--fg)] font-bold tabular-nums">{config.scrollBurstGapMs} ms</span>
                   </div>
                   <input
                     type="range"
@@ -625,9 +657,9 @@ export default function App() {
                     min="1"
                     max="10"
                     step="1"
-                    value={config.scrollBurstGapMs}
+                    aria-label="Scroll burst gap" value={config.scrollBurstGapMs}
                     onChange={(e) => setConfig(prev => ({ ...prev, scrollBurstGapMs: parseInt(e.target.value, 10) }))}
-                    className="w-full accent-cyan-500"
+                    className="w-full accent-[var(--accent)]"
                   />
                 </div>
               </div>
@@ -637,29 +669,47 @@ export default function App() {
 
         {/* ════ TAB 4: PHYSICS CONSTANTS ════ */}
         {activeTab === 'physics' && (
-          <div className="bg-[#121622] border border-[#1b202e] rounded-lg p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#1b202e] pb-3">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-sm px-6 py-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
               <div>
-                <span className="text-sm font-mono font-bold text-slate-200">VALVE SOURCE SDK PHYSICS PIPELINE</span>
-                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                <span className="text-sm font-medium text-[var(--fg)]">Source SDK physics pipeline</span>
+                <p className="text-xs text-[var(--muted)] mt-0.5">
                   Internal simulation parameters matching Counter-Strike 2 engine settings
                 </p>
               </div>
               <button
                 onClick={saveConfig}
                 disabled={!connected || saving}
-                className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs rounded transition flex items-center gap-1.5"
+                className="px-4 py-2 bg-[var(--accent)] hover:opacity-90 text-[var(--accent-fg)] font-medium text-xs rounded-lg transition flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
-                {saving ? 'SAVING...' : 'SAVE TO MARCO.INI'}
+                {saving ? 'Saving…' : 'Save to marco.ini'}
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
-              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+            <section aria-label="SOCD Control" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
+              <h2 className="text-xs font-medium text-[var(--fg)]">SOCD control</h2>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { mode: SocdMode.FULL, label: 'FULL', detail: 'High Performance', color: 'state-ok' },
+                  { mode: SocdMode.HUMANIZED, label: 'HUMANIZED', detail: 'Fixed 8 ms overlap', color: 'state-warning' },
+                  { mode: SocdMode.OFF, label: 'OFF', detail: 'Native Passthrough', color: 'border-[var(--accent)] bg-[var(--bg)] text-[var(--fg)]' }
+                ].map(option => <button key={option.mode} type="button" aria-pressed={config.socdMode === option.mode}
+                  disabled={!connected || saving} onClick={() => selectSocdMode(option.mode)}
+                  className={`rounded-lg border p-4 text-left transition disabled:opacity-50 ${config.socdMode === option.mode ? option.color : 'border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)]'}`}>
+                  <span className="flex items-center justify-between text-sm font-bold tabular-nums">{option.label}{config.socdMode === option.mode && <Check className="h-4 w-4" />}</span>
+                  <span className="mt-1 block text-xs">{option.detail}</span>
+                </button>)}
+              </div>
+              <p className="mt-4 text-xs leading-5 text-[var(--muted)]">FULL: latest key wins immediately. HUMANIZED: fixed 8 ms overlap, then latest key wins. OFF: native opposing-key input. Auto Counter-Strafe remains active on release in every mode.</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">Changes apply and save immediately. Release W/A/S/D before switching. Bhop is controlled separately.</p>
+            </section>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-300">sv_friction (Friction Coefficient):</span>
-                  <span className="text-cyan-400 font-bold">{config.physFriction.toFixed(2)}</span>
+                  <span className="text-[var(--fg)]">sv_friction (Friction Coefficient):</span>
+                  <span className="text-[var(--fg)] font-bold tabular-nums">{config.physFriction.toFixed(2)}</span>
                 </div>
                 <input
                   type="range"
@@ -667,16 +717,16 @@ export default function App() {
                   min="2.0"
                   max="10.0"
                   step="0.1"
-                  value={config.physFriction}
+                  aria-label="sv_friction" value={config.physFriction}
                   onChange={(e) => setConfig(prev => ({ ...prev, physFriction: parseFloat(e.target.value) }))}
-                  className="w-full accent-cyan-500"
+                  className="w-full accent-[var(--accent)]"
                 />
               </div>
 
-              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+              <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-300">sv_accelerate (Opposing Acceleration):</span>
-                  <span className="text-cyan-400 font-bold">{config.physAccelerate.toFixed(2)}</span>
+                  <span className="text-[var(--fg)]">sv_accelerate (Opposing Acceleration):</span>
+                  <span className="text-[var(--fg)] font-bold tabular-nums">{config.physAccelerate.toFixed(2)}</span>
                 </div>
                 <input
                   type="range"
@@ -684,16 +734,16 @@ export default function App() {
                   min="2.0"
                   max="10.0"
                   step="0.1"
-                  value={config.physAccelerate}
+                  aria-label="sv_accelerate" value={config.physAccelerate}
                   onChange={(e) => setConfig(prev => ({ ...prev, physAccelerate: parseFloat(e.target.value) }))}
-                  className="w-full accent-cyan-500"
+                  className="w-full accent-[var(--accent)]"
                 />
               </div>
 
-              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+              <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-300">sv_stopspeed:</span>
-                  <span className="text-cyan-400 font-bold">{config.physStopSpeed.toFixed(1)} u/s</span>
+                  <span className="text-[var(--fg)]">sv_stopspeed:</span>
+                  <span className="text-[var(--fg)] font-bold tabular-nums">{config.physStopSpeed.toFixed(1)} u/s</span>
                 </div>
                 <input
                   type="range"
@@ -701,16 +751,16 @@ export default function App() {
                   min="40.0"
                   max="120.0"
                   step="1.0"
-                  value={config.physStopSpeed}
+                  aria-label="sv_stopspeed" value={config.physStopSpeed}
                   onChange={(e) => setConfig(prev => ({ ...prev, physStopSpeed: parseFloat(e.target.value) }))}
-                  className="w-full accent-cyan-500"
+                  className="w-full accent-[var(--accent)]"
                 />
               </div>
 
-              <div className="bg-[#0c0e14] border border-[#1b202e] p-3.5 rounded space-y-2">
+              <div className="bg-[var(--bg)] border border-[var(--border)] p-4 rounded-lg space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-300">sv_maxspeed:</span>
-                  <span className="text-cyan-400 font-bold">{config.physMaxSpeed.toFixed(1)} u/s</span>
+                  <span className="text-[var(--fg)]">sv_maxspeed:</span>
+                  <span className="text-[var(--fg)] font-bold tabular-nums">{config.physMaxSpeed.toFixed(1)} u/s</span>
                 </div>
                 <input
                   type="range"
@@ -718,9 +768,9 @@ export default function App() {
                   min="200.0"
                   max="300.0"
                   step="1.0"
-                  value={config.physMaxSpeed}
+                  aria-label="sv_maxspeed" value={config.physMaxSpeed}
                   onChange={(e) => setConfig(prev => ({ ...prev, physMaxSpeed: parseFloat(e.target.value) }))}
-                  className="w-full accent-cyan-500"
+                  className="w-full accent-[var(--accent)]"
                 />
               </div>
             </div>

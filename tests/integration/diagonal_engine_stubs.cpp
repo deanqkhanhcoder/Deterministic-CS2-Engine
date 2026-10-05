@@ -1,6 +1,8 @@
 #include "../../src/core/engine_internal.h"
 #include "runtime_config.h"
 #include "timing.h"
+#include "telemetry.h"
+#include "debug_logger.h"
 
 #include <array>
 #include <atomic>
@@ -10,6 +12,7 @@ namespace {
 std::atomic<int64_t> g_nowUs{0};
 std::atomic<uint64_t> g_nextTimerId{1};
 std::array<std::atomic<uint64_t>, 5> g_timers{};
+std::array<int64_t, 5> g_deadlines{};
 std::array<Key, 8> g_scheduleTrace{};
 size_t g_scheduleTraceCount = 0;
 // -1 accepts indefinitely; 0 rejects; positive values count admissions left.
@@ -31,6 +34,16 @@ void AdvanceUs(int64_t deltaUs) {
 uint64_t TakeTimer(Key key) {
     return g_timers[ki(key)].exchange(0, std::memory_order_acq_rel);
 }
+int64_t TimerDeadlineUs(Key key) { return g_deadlines[ki(key)]; }
+void ExpireDueTimers() {
+    for (int i = 0; i < 4; ++i) {
+        if (g_timers[i].load(std::memory_order_acquire) != 0 &&
+            g_nowUs.load(std::memory_order_acquire) >= g_deadlines[i]) {
+            const auto key = static_cast<Key>(i);
+            engine::OnTimerExpired(key, TakeTimer(key));
+        }
+    }
+}
 void SetTimerSchedulesBeforeFailure(int admissions) {
     g_timerSchedulesBeforeFailure.store(admissions, std::memory_order_release);
 }
@@ -46,10 +59,16 @@ Key ScheduledKey(size_t index) {
 }
 
 namespace target_platform {
+TargetIdentity GetCurrentIdentity() { return g_liveTarget; }
 bool IsExpectedTargetActive(const TargetIdentity& expected) noexcept {
     return expected.IsValid() && expected == g_liveTarget;
 }
 }
+
+namespace bhop { void ForceSpaceSync(bool) {} }
+namespace capture { bool Reinstall() { return true; } }
+namespace telemetry { ForensicRingBuffer g_forensicBuffer; }
+namespace dlog { void Write(Subsystem, Level, const char*, int, const char*, ...) {} }
 
 namespace rcfg {
 RuntimeConfig Get() { return g_config; }
@@ -67,7 +86,7 @@ void StartTimerThread() {}
 void StopTimerThread() {
     for (auto& timer : g_timers) timer.store(0, std::memory_order_release);
 }
-uint64_t ScheduleTimerUs(Key key, int64_t) {
+uint64_t ScheduleTimerUs(Key key, int64_t durationUs) {
     int remaining = g_timerSchedulesBeforeFailure.load(std::memory_order_acquire);
     while (remaining >= 0) {
         if (remaining == 0) return 0;
@@ -80,6 +99,7 @@ uint64_t ScheduleTimerUs(Key key, int64_t) {
     if (g_scheduleTraceCount < g_scheduleTrace.size()) {
         g_scheduleTrace[g_scheduleTraceCount++] = key;
     }
+    g_deadlines[ki(key)] = NowUs() + durationUs;
     g_timers[ki(key)].store(id, std::memory_order_release);
     return id;
 }

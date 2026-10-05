@@ -39,4 +39,7 @@ void ReconcileTargetFocus();
 // hook callbacks only enqueue these records.
 void DrainRoutedInputEvents();
 
+// Owner-thread transition; reject held WASD, cancel and release pending brakes.
+bool PrepareSocdModeChange();
+
 } // namespace capture

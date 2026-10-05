@@ -8,7 +8,10 @@
 #include <cstdint>
 #include <atomic>
 
+enum class SocdMode : int { FULL = 0, HUMANIZED = 1, OFF = 2 };
+
 struct RuntimeConfig {
+    SocdMode socdMode = SocdMode::FULL;
     // ── Counter-Strafe ──
     int    quickTapMs        = 30;
     int    maxScaleMs        = 80;

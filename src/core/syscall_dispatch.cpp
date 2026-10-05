@@ -1,5 +1,7 @@
 #include "syscall_dispatch.h"
 
+std::atomic<const char*> g_injection_path{"user32"};
+
 #ifndef MARCO_SYSCALL_DISPATCH_TESTING
 #include <algorithm>
 #include <array>
@@ -24,6 +26,7 @@ struct NativeDispatch {
             static_assert(sizeof(send) == sizeof(address));
             std::memcpy(&send, &address, sizeof(send));
         }
+        g_injection_path.store(send ? "ntuser" : "user32", std::memory_order_release);
     }
     ~NativeDispatch() { if (module) FreeLibrary(module); }
 };
@@ -59,6 +62,7 @@ void InitializeInjectionDispatch() {
 void SetInjectionDispatchForTesting(NtUserSendInputFn native, User32SendInputFn fallback) {
     s_native = native;
     s_fallback = fallback ? fallback : NoDesktopInput;
+    g_injection_path.store(native ? "ntuser" : "user32", std::memory_order_release);
 }
 #elif !defined(MARCO_RELEASE)
 int BenchmarkInjectionPaths() {

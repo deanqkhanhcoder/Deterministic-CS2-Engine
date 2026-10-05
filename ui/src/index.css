@@ -3,24 +3,50 @@
 @tailwind utilities;
 
 @layer base {
-  body {
-    background-color: #090a0f;
-    color: #e2e8f0;
+  :root {
+    color-scheme: light;
+    --bg: #f4f5f7;
+    --fg: #20252d;
+    --card: #ffffff;
+    --border: #d4d8df;
+    --muted: #626b78;
+    --accent: #374151;
+    --accent-fg: #ffffff;
+    --ok: #167044;
+    --danger: #b32d40;
+    --warning: #855800;
   }
+  :root.dark {
+    color-scheme: dark;
+    --bg: #15171b;
+    --fg: #e7e9ed;
+    --card: #1e2127;
+    --border: #383e48;
+    --muted: #a1a8b4;
+    --accent: #c2cad5;
+    --accent-fg: #15171b;
+    --ok: #7acb9c;
+    --danger: #f38a98;
+    --warning: #e8c16d;
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  button, input { accent-color: var(--accent); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  ::selection { background: color-mix(in srgb, var(--accent) 25%, transparent); }
 }
 
-/* Custom scrollbars for telemetry feeds */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+@layer components {
+  .card { @apply rounded-lg border border-[var(--border)] bg-[var(--card)] shadow-sm; }
+  .tone-ok { color: var(--ok); }
+  .tone-danger { color: var(--danger); }
+  .tone-warning { color: var(--warning); }
+  .tone-neutral { color: var(--muted); }
+  .state-ok { color: var(--ok); border-color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, var(--card)); }
+  .state-danger { color: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--card)); }
+  .state-warning { color: var(--warning); border-color: var(--warning); background: color-mix(in srgb, var(--warning) 8%, var(--card)); }
 }
-::-webkit-scrollbar-track {
-  background: #090a0f;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e2433;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }

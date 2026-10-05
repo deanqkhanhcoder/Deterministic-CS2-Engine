@@ -153,6 +153,9 @@ static LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             return 0;
         }
 
+        case WM_CONFIG_REQUEST:
+            return ipc::DispatchConfigRequest(wParam);
+
         case WM_ROUTED_INPUT_READY: {
             capture::DrainRoutedInputEvents();
             return 0;

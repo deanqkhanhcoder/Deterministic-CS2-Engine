@@ -15,14 +15,31 @@ int main() {
 
     RuntimeConfig first{};
     first.quickTapMs = 11;
+    first.socdMode = SocdMode::HUMANIZED;
     first.activeBrakeProfileIndex = 1;
     RuntimeConfig second{};
     second.quickTapMs = 77;
+    second.socdMode = SocdMode::OFF;
     second.activeBrakeProfileIndex = 4;
 
     if (!config_io::Save(first)) {
         std::cerr << "initial Save failed, GetLastError=" << GetLastError() << '\n';
         return 2;
+    }
+
+    for (auto mode : {SocdMode::FULL, SocdMode::HUMANIZED, SocdMode::OFF}) {
+        RuntimeConfig input{}; input.socdMode = mode;
+        assert(config_io::Save(input));
+        RuntimeConfig output{};
+        assert(config_io::Load(output) && output.socdMode == mode);
+    }
+    assert(WritePrivateProfileStringW(L"Strafe", L"socd_mode", nullptr, configPath.c_str()));
+    RuntimeConfig legacy{};
+    assert(config_io::Load(legacy) && legacy.socdMode == SocdMode::FULL);
+    for (const auto* bad : {L"99", L"1.5", L"garbage", L""}) {
+        assert(WritePrivateProfileStringW(L"Strafe", L"socd_mode", bad, configPath.c_str()));
+        RuntimeConfig invalid{};
+        assert(config_io::Load(invalid) && invalid.socdMode == SocdMode::OFF);
     }
 
     std::vector<std::thread> writers;
@@ -39,9 +56,9 @@ int main() {
     RuntimeConfig loaded{};
     assert(config_io::Load(loaded));
     const bool isFirst = loaded.quickTapMs == first.quickTapMs &&
-                         loaded.activeBrakeProfileIndex == first.activeBrakeProfileIndex;
+                         loaded.activeBrakeProfileIndex == first.activeBrakeProfileIndex && loaded.socdMode == first.socdMode;
     const bool isSecond = loaded.quickTapMs == second.quickTapMs &&
-                          loaded.activeBrakeProfileIndex == second.activeBrakeProfileIndex;
+                          loaded.activeBrakeProfileIndex == second.activeBrakeProfileIndex && loaded.socdMode == second.socdMode;
     assert(isFirst || isSecond);
     assert(GetFileAttributesW(tempPath.c_str()) == INVALID_FILE_ATTRIBUTES);
 

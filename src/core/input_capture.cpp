@@ -149,6 +149,18 @@ void DrainRoutedInputEvents() {
     }
 }
 
+bool PrepareSocdModeChange() {
+    // Runs on the hook-owner thread: complete old routed edges before switching.
+    while (s_routedEvents.Size() != 0) DrainRoutedInputEvents();
+    for (bool down : s_wasdPhysDown) if (down) return false;
+    const auto state = engine::GetState();
+    for (int i = 0; i < 4; ++i) if (state.phys[i]) return false;
+    engine::ClearHeldKeys(target_platform::GetCurrentIdentity());
+    if (injection::HeldMovementMask() != 0 || injection::PendingReleaseCount() != 0) return false;
+    for (bool& swallowed : s_wasdSwallowed) swallowed = false;
+    return true;
+}
+
 void ReconcileTargetFocus() {
     (void)ReconcileTargetFocusNow();
 }
@@ -433,6 +445,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         Key k = static_cast<Key>(keyIdx);
         bool supportStrafe = (caps & target_platform::CAP_CSTRAFE);
         bool routeThis = shouldRoute && supportStrafe;
+        const bool nativeSocd = rcfg::Get().socdMode == SocdMode::OFF;
         
         if (isDown) {
             const bool isEdge = !s_wasdPhysDown[keyIdx];
@@ -440,7 +453,7 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 s_wasdPhysDown[keyIdx] = true;
                 const bool queued = QueueRoutedEvent(
                     {RoutedKeyEvent::Kind::KeyDown, k, routeThis, dispatchTarget});
-                s_wasdSwallowed[keyIdx] = routeThis && queued;
+                s_wasdSwallowed[keyIdx] = routeThis && queued && !nativeSocd;
             }
             if (s_wasdSwallowed[keyIdx]) return 1;
         } else {
@@ -449,7 +462,9 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 (void)QueueRoutedEvent(
                     {RoutedKeyEvent::Kind::KeyUp, k, routeThis, dispatchTarget});
             }
-            bool wasSwallowed = s_wasdSwallowed[keyIdx];
+            // A native key-up must not cut short an already-owned brake burst.
+            bool wasSwallowed = s_wasdSwallowed[keyIdx] ||
+                (nativeSocd && routeThis && engine::IsCounterStrafeHoldingKey(k, dispatchTarget));
             s_wasdSwallowed[keyIdx] = false; 
             if (wasSwallowed) return 1; 
         }

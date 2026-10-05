@@ -12,6 +12,10 @@
 #include "workspace.h"
 #include "timing.h"
 #include "bhop.h"
+#include "input_capture.h"
+#include "syscall_dispatch.h"
+#include <memory>
+#include <charconv>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -41,6 +45,58 @@ static std::mutex        s_sseClientsMutex;
 static std::vector<SOCKET> s_sseClients;
 static std::atomic<bool> s_stateChanged{false};
 static std::mutex s_apiMutex; // Serialize IPC read/apply/save transactions.
+
+enum class ConfigAction { Apply, SafeMode, Revert };
+struct ConfigRequest {
+    ConfigAction action;
+    RuntimeConfig config;
+    WPARAM id;
+};
+static std::mutex s_configRequestMutex;
+static std::shared_ptr<ConfigRequest> s_configRequest;
+static WPARAM s_nextConfigRequestId = 0; // API transactions are serialized.
+
+LRESULT DispatchConfigRequest(WPARAM id) {
+    if (!s_running.load(std::memory_order_acquire)) return 0;
+    std::shared_ptr<ConfigRequest> request;
+    {
+        std::lock_guard<std::mutex> lock(s_configRequestMutex);
+        if (!s_configRequest || s_configRequest->id != id) return 0;
+        request = s_configRequest;
+    }
+    const bool mayChangeMode = request->action != ConfigAction::Apply ||
+        request->config.socdMode != rcfg::Get().socdMode ||
+        request->config.safeModeEnabled != rcfg::Get().safeModeEnabled;
+    if (mayChangeMode && !capture::PrepareSocdModeChange()) return 0;
+    switch (request->action) {
+        case ConfigAction::Apply: rcfg::Apply(request->config); break;
+        case ConfigAction::SafeMode: rcfg::SetSafeMode(request->config.safeModeEnabled); break;
+        case ConfigAction::Revert: if (!rcfg::RevertToSnapshot()) return 2; break;
+    }
+    return 1;
+}
+
+static LRESULT SubmitConfigRequest(ConfigAction action, const RuntimeConfig& config) {
+    const auto request = std::make_shared<ConfigRequest>(ConfigRequest{action, config, ++s_nextConfigRequestId});
+    {
+        std::lock_guard<std::mutex> lock(s_configRequestMutex);
+        s_configRequest = request;
+    }
+    DWORD_PTR result = 0;
+    const bool completed = s_msgHwnd && SendMessageTimeoutW(s_msgHwnd, WM_CONFIG_REQUEST,
+        request->id, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &result);
+    {
+        std::lock_guard<std::mutex> lock(s_configRequestMutex);
+        if (s_configRequest == request) s_configRequest.reset();
+    }
+    return completed ? static_cast<LRESULT>(result) : 3;
+}
+
+static const char* ConfigRequestError(LRESULT result) {
+    return result == 2 ? "{\"error\":\"No snapshot available\"}" :
+        result == 3 ? "{\"error\":\"Configuration request timed out; refresh state\"}" :
+        "{\"error\":\"Release W/A/S/D before changing SOCD mode or restoring configuration\"}";
+}
 
 // ── Token Generation & Storage ──
 static std::string GenerateToken() {
@@ -159,6 +215,7 @@ static double ExtractDouble(const std::string& json, const std::string& key, dou
 static std::string SerializeConfig(const RuntimeConfig& cfg) {
     std::ostringstream ss;
     ss << "{\n"
+       << "  \"socdMode\": " << static_cast<int>(cfg.socdMode) << ",\n"
        << "  \"quickTapMs\": " << cfg.quickTapMs << ",\n"
        << "  \"maxScaleMs\": " << cfg.maxScaleMs << ",\n"
        << "  \"crouchMult\": " << cfg.crouchMult << ",\n"
@@ -218,6 +275,7 @@ static std::string SerializeTelemetry(const RuntimeSnapshot& snap) {
     WideCharToMultiByte(CP_UTF8, 0, snap.activeBrakeProfileName, -1, profileNameUtf8, sizeof(profileNameUtf8), nullptr, nullptr);
 
     ss << "{\n"
+       << "  \"injection_path\": \"" << g_injection_path.load(std::memory_order_acquire) << "\",\n"
        << "  \"runtimeState\": " << static_cast<int>(snap.runtimeState) << ",\n"
        << "  \"suspended\": " << (snap.suspended ? "true" : "false") << ",\n"
        << "  \"axisStateX\": " << static_cast<int>(snap.axisState[0]) << ",\n"
@@ -290,6 +348,25 @@ static std::string SerializeTelemetry(const RuntimeSnapshot& snap) {
 
 static bool UpdateConfigFromJson(RuntimeConfig& cfg, const std::string& body) {
     cfg.quickTapMs = ExtractInt(body, "quickTapMs", cfg.quickTapMs);
+    // Strictly validate the new enum: reject fractions, strings, overflow and suffixes.
+    bool modeSeen = false;
+    for (const auto* modeKey : {"socdMode", "socd_mode"}) {
+        const size_t keyPos = body.find(std::string("\"") + modeKey + "\"");
+        if (keyPos != std::string::npos) {
+            const size_t colon = body.find(':', keyPos);
+            if (colon == std::string::npos) return false;
+            const size_t start = body.find_first_not_of(" \t\r\n", colon + 1);
+            if (start == std::string::npos) return false;
+            int value = -1;
+            const auto parsed = std::from_chars(body.data() + start, body.data() + body.size(), value);
+            const size_t end = body.find_first_not_of(" \t\r\n", static_cast<size_t>(parsed.ptr - body.data()));
+            if (parsed.ec != std::errc{} || value < 0 || value > 2 ||
+                (end != std::string::npos && body[end] != ',' && body[end] != '}')) return false;
+            if (modeSeen && value != static_cast<int>(cfg.socdMode)) return false;
+            cfg.socdMode = static_cast<SocdMode>(value);
+            modeSeen = true;
+        }
+    }
     cfg.maxScaleMs = ExtractInt(body, "maxScaleMs", cfg.maxScaleMs);
     cfg.crouchMult = ExtractDouble(body, "crouchMult", cfg.crouchMult);
     cfg.latencyMarginMs = ExtractInt(body, "latencyMarginMs", cfg.latencyMarginMs);
@@ -549,9 +626,14 @@ static void HandleClient(SOCKET clientSock) {
     } else if (method == "POST" && pathOnly == "/api/config") {
         RuntimeConfig cfg = rcfg::GetUserConfig();
         if (!UpdateConfigFromJson(cfg, body)) {
-            SendResponse(clientSock, 400, "Bad Request", "application/json", "{\"error\":\"Invalid profile payload\"}");
+            SendResponse(clientSock, 400, "Bad Request", "application/json", "{\"error\":\"Invalid configuration payload\"}");
         } else {
-            rcfg::Apply(cfg);
+            const LRESULT applied = SubmitConfigRequest(ConfigAction::Apply, cfg);
+            if (applied != 1) {
+                SendResponse(clientSock, applied == 3 ? 503 : 409, "Configuration Rejected", "application/json", ConfigRequestError(applied));
+                closesocket(clientSock);
+                return;
+            }
             cfg = rcfg::GetUserConfig();
             const bool saved = config_io::Save(cfg);
             NotifyStateChanged();
@@ -586,16 +668,18 @@ static void HandleClient(SOCKET clientSock) {
         }
         // Do not close socket; kept open for SSE worker
     } else if (method == "POST" && pathOnly == "/api/safemode") {
-        bool enable = ExtractBool(body, "enabled", false);
-        rcfg::SetSafeMode(enable);
+        RuntimeConfig cfg = rcfg::GetUserConfig();
+        cfg.safeModeEnabled = ExtractBool(body, "enabled", false);
+        const LRESULT applied = SubmitConfigRequest(ConfigAction::SafeMode, cfg);
         NotifyStateChanged();
-        SendResponse(clientSock, 200, "OK", "application/json", SerializeConfig(rcfg::GetUserConfig()));
+        SendResponse(clientSock, applied == 1 ? 200 : applied == 3 ? 503 : 409, "Configuration", "application/json",
+            applied == 1 ? SerializeConfig(rcfg::GetUserConfig()) : ConfigRequestError(applied));
         closesocket(clientSock);
     } else if (method == "POST" && pathOnly == "/api/revert") {
-        bool reverted = rcfg::RevertToSnapshot();
+        const LRESULT applied = SubmitConfigRequest(ConfigAction::Revert, rcfg::GetUserConfig());
         NotifyStateChanged();
-        SendResponse(clientSock, reverted ? 200 : 409, reverted ? "OK" : "Conflict", "application/json",
-                     reverted ? SerializeConfig(rcfg::GetUserConfig()) : "{\"error\":\"No snapshot available\"}");
+        SendResponse(clientSock, applied == 1 ? 200 : applied == 3 ? 503 : 409, "Configuration", "application/json",
+                     applied == 1 ? SerializeConfig(rcfg::GetUserConfig()) : ConfigRequestError(applied));
         closesocket(clientSock);
     } else if (method == "POST" && pathOnly == "/api/profile") {
         int idx = ExtractInt(body, "index", 1);

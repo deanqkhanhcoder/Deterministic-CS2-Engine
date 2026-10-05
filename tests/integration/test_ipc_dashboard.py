@@ -87,6 +87,7 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
             initial = events.readline().decode().strip()
             snapshot = json.loads(initial.removeprefix("data: "))
             assert snapshot["suspended"] is False
+            assert snapshot["injection_path"] in ("ntuser", "user32")
             assert snapshot["hud"]["lastResult"] == "IDLE"
             assert snapshot["hud"]["lastBrakeMs"] == snapshot["hud"]["lastBrakeUs"] / 1000
             assert snapshot["hud"]["lastBrakeTicks"] == snapshot["hud"]["lastBrakeUs"] / 15625
@@ -97,14 +98,18 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
                 line = events.readline().decode().strip()
                 if line == "event: state_changed":
                     changed = json.loads(events.readline().decode().strip().removeprefix("data: "))
+                    assert changed["injection_path"] == snapshot["injection_path"]
                     # Startup/hook events may already be buffered before this mutation.
                     if changed["profile"]["name"] == "PISTOL":
                         break
             else:
                 raise AssertionError("Missing state_changed SSE event")
         for suspended in (True, True, False, False):
-            assert request("/api/state", {"suspended": suspended})["suspended"] is suspended
-            assert request("/api/telemetry")["suspended"] is suspended
+            state = request("/api/state", {"suspended": suspended})
+            telemetry = request("/api/telemetry")
+            assert state["suspended"] is suspended
+            assert telemetry["suspended"] is suspended
+            assert state["injection_path"] == telemetry["injection_path"] == snapshot["injection_path"]
         for desired in (True, False):
             # Menu command uses the same message path as the real tray selection.
             assert USER32.PostMessageW(window, 0x111, 40002, 0)  # WM_COMMAND, ID_TRAY_TOGGLE
@@ -116,6 +121,14 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
             request("/api/state", invalid, expected=400)
         for index in range(1, 5):
             assert request("/api/config", {"activeProfileIndex": index})["activeBrakeProfileIndex"] == index
+        for mode in (0, 1, 2, 0):
+            assert request("/api/config", {"socdMode": mode})["socdMode"] == mode
+            assert request("/api/config")["socdMode"] == mode
+        assert request("/api/config", {"socd_mode": 1})["socdMode"] == 1
+        for invalid in (-1, 3, 1.5, "1", True, None, 999999999999999999):
+            request("/api/config", {"socdMode": invalid}, expected=400)
+            assert request("/api/config")["socdMode"] == 1
+        request("/api/config", {"socdMode": 0, "socd_mode": 1}, expected=400)
         cfg = request("/api/config")
         for index in range(1, 5):
             cfg["brakeProfiles"][index].update(accuracyThreshold=20 + index,
@@ -137,7 +150,7 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
         assert request("/api/config") == cfg
         snapshot = copy.deepcopy(cfg)
         assert request("/api/safemode", {"enabled": True})["safeModeEnabled"]
-        request("/api/config", {"profile_3": {"accuracyThreshold": 50}})
+        request("/api/config", {"profile_3": {"accuracyThreshold": 50}, "socdMode": 2})
         assert request("/api/revert", {}) == snapshot
         assert request("/api/config") == snapshot
         assert request("/api/safemode", {"enabled": True})["safeModeEnabled"]
@@ -155,8 +168,10 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
             process.wait(timeout=10)
         assert not (sandbox / "marco.token").exists(), "Session token leaked after tray exit"
         process = launch(exe)
-        assert request("/api/config")["brakeProfiles"] == cfg["brakeProfiles"], "INI roundtrip failed"
-        print("PASS: embedded icon, tray toggle/exit cleanup, SSE, power, auth, profiles, fragmented POST, validation, safe mode, snapshot, reset, INI roundtrip")
+        persisted = request("/api/config")
+        assert persisted["brakeProfiles"] == cfg["brakeProfiles"], "INI roundtrip failed"
+        assert persisted["socdMode"] == cfg["socdMode"], "SOCD INI roundtrip failed"
+        print("PASS: embedded icon, tray toggle/exit cleanup, SSE, power, auth, profiles, fragmented POST, validation, safe mode, snapshot, reset, SOCD modes/validation, INI roundtrip")
     finally:
         if process.poll() is None:
             try:

@@ -1,5 +1,9 @@
 #pragma once
 #include <windows.h>
+#include <atomic>
+
+// Published once at resolution; telemetry reads without invoking the dispatcher.
+extern std::atomic<const char*> g_injection_path;
 
 // The native export returns an inserted-event count, not an NTSTATUS.
 using NtUserSendInputFn = UINT (NTAPI *)(UINT, LPINPUT, int);

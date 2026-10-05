@@ -52,6 +52,7 @@ void OnTimerExpired(Key k, uint64_t timerId);
 // ── Suspend/Resume ──
 void ToggleSuspend();
 bool IsSuspended();
+bool IsCounterStrafeHoldingKey(Key key, const target_platform::TargetIdentity& target);
 void ClearHeldKeys(const target_platform::TargetIdentity& target);
 UINT ReconcilePendingOutput(
     const target_platform::TargetIdentity& target);

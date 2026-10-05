@@ -201,6 +201,7 @@ marco_add_safe_test(marco_test_diagonal_engine_stress
     tests/integration/test_diagonal_engine_stress.cpp
     tests/integration/diagonal_engine_stubs.cpp
     src/core/input_router.cpp
+    src/core/state_reconciliation.cpp
     src/core/counterstrafe_controller.cpp
     src/core/timer_lifecycle.cpp
     src/core/injection.cpp

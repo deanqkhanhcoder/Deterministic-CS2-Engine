@@ -20,6 +20,9 @@ void StopServer();
 // Notify connected SSE stream subscribers of an engine state change.
 void NotifyStateChanged();
 
+// Execute an IPC configuration request on the hook-owner message thread.
+LRESULT DispatchConfigRequest(WPARAM requestId);
+
 // Get the active session authentication token.
 std::string GetAuthToken();
 

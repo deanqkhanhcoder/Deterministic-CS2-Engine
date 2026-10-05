@@ -6,9 +6,31 @@ Operating as a headless background daemon with a local loopback IPC REST/SSE ser
 
 ---
 
-## Release v28 — Live Telemetry
+## SOCD modes and independent Auto Counter-Strafe
 
-The Telemetry HUD places velocity, the last brake verdict/duration, and P99 jitter above a live velocity trace and W/A/S/D matrix. Switch **VELOCITY** / **QPC / WAKE** to inspect either signal. Every SSE packet appends to a 100-sample, 3.3-second sliding window; axes auto-scale with floors of 250 u/s and 100 µs. The dashed accuracy line follows the active weapon profile (including 17 u/s for Sniper).
+Choose **Physics parameters → SOCD control**. `socdMode` persists as `[Strafe] socd_mode` in `marco.ini`: `0 = FULL`, `1 = HUMANIZED`, `2 = OFF`. Existing `1` (formerly LITE) now selects HUMANIZED; no probabilistic 70/30 policy remains. Missing legacy settings default to FULL; invalid values fall back to OFF. REST accepts `socdMode` (or `socd_mode`) integers only.
+
+- **FULL**: the newest physical key-down immediately releases the opposing logical key. Both held keys retain stable last-key priority; repeats and timer ticks never flip direction.
+- **HUMANIZED**: the newest key becomes active immediately; the old key is released once after a fixed 8000 µs overlap. Release/repress and focus/pause cleanup cancel the old timer; stale callbacks cannot alter the new transition. No random roll or sleep is used. Timer admission failure falls back to immediate priority.
+- **OFF**: physical opposing keys pass through the hook unchanged; both held keys cancel wishdir. SOCD OFF does not disable Auto Counter-Strafe.
+
+**Auto Counter-Strafe** runs independently on physical Key_Up when no opposing physical key remains held and velocity still needs braking. It calculates the burst from the existing movement model/profile in all three modes. OFF tracks native physical output separately from synthetic brake ownership; a physical counter-key release cannot truncate its armed burst. Hook reads use an atomic mask and target identity without locking. Profile brake overlap is separate from the fixed HUMANIZED direction-switch overlap.
+
+Release W/A/S/D before switching modes or restoring configurations. Changes apply and save immediately; failure to release owned input rejects the change. Safe Mode snapshots include the SOCD mode. FULL/HUMANIZED deliberately keep moving in the newest held direction; OFF cancels opposing held keys. A brake ends at the accuracy threshold; remaining velocity decays to zero through friction.
+
+Regression tests hold A+D and W+S for 2000 ms in all modes and both press orders, assert stable output/no repeated injection, and verify A→D release braking for 94–109 ms with default movement settings, including physical counter-key taps. `cmake --build build/make-tests --target check` runs these tests.
+
+## Release v29 — Dashboard themes and injection path
+
+The header theme button switches between light and dark palettes. The choice is saved as `marco_theme` in localStorage; without a saved choice, the dashboard follows `prefers-color-scheme`, including system theme changes. Cards use a shared 8px spacing grid, restrained borders, and semantic green/red/yellow statuses.
+
+Telemetry HUD now has four equal KPI cards, a velocity/timing chart beside the key matrix, and one diagnostics strip. **Injection path — NtUserSendInput** is green; **SendInput (fallback)** is yellow. The authenticated REST/SSE telemetry field `injection_path` reports `ntuser` or `user32` from the cached dispatcher resolution. Before telemetry arrives, the UI shows a waiting state rather than assuming fallback.
+
+Charts retain the 100-sample sliding window, auto-scaling and missing-packet gaps. Loading uses a skeleton; no samples shows an empty state. The live dot is static and reports the measured SSE rate. Build with `cd ui; npm run build`; tests: `npm test` and `cmake --build build/make-tests --target check`. Release: `mingw32-make release`.
+
+## Live telemetry
+
+The Telemetry HUD places velocity, brake verdict, last duration, and P99 jitter above a live velocity trace and W/A/S/D matrix. Switch **Velocity** / **QPC / wake** to inspect either signal. Every SSE packet appends to a 100-sample, 3.3-second sliding window; axes auto-scale with floors of 250 u/s and 100 µs. The dashed accuracy line follows the active weapon profile (including 17 u/s for Sniper).
 
 Velocity is a Source-physics estimate from delivered keys, advanced on a snapshot copy without changing the movement engine. Timing mode shows P50 statistics from the last 128 timings; idle zeros are expected before the first timing sample. Missing packets leave visible gaps, and the packet-rate indicator falls to zero after disconnect. Brake ticks are fractional 64 Hz equivalents, not truncated integers; the phase timeline is a guide.
 

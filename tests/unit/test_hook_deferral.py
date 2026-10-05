@@ -55,6 +55,10 @@ for signature in (
             "Mouse shooting must not enter counter-strafe routing"
         )
 
+keyboard = function_body("static LRESULT CALLBACK KeyboardProc")
+assert "routeThis = shouldRoute && supportStrafe;" in keyboard
+assert "routeThis && queued && !nativeSocd" in keyboard
+assert "nativeSocd && routeThis && engine::IsCounterStrafeHoldingKey(k, dispatchTarget)" in keyboard
 assert "RoutedKeyEvent::Kind::Mouse" not in source
 assert "engine::OnLButton" not in source
 assert "OnLButton" not in engine_api

@@ -56,10 +56,13 @@ extern std::atomic<uint32_t> g_lastBrakeResultCode;
 void PublishEngineState();
 void NotifyStateChanged();
 void CommitLogicalStateFromInjection();
+void UpdateVelocityWishFromLogicalState();
+void TrackNativeMovement(const target_platform::TargetIdentity& target);
 void FlushAndCommitLogicalState(InjectionBatch& batch);
 
 // Core logical handlers
-void ResolveAxis(Axis ax, InjectionBatch& batch);
+void ResolveAxis(Axis ax, InjectionBatch& batch, bool onPhysicalPress = false);
+void CancelSocdTransition(Axis ax);
 void NeutralizeAxis(Axis ax, InjectionBatch& batch);
 void CancelStaleCounterStrafe(Key oppKey, InjectionBatch& batch);
 bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch);

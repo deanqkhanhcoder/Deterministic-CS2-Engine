@@ -38,6 +38,7 @@ int main() {
     invalid.conflictDecrement = std::numeric_limits<double>::infinity();
     invalid.quickTapMs = -50;
     invalid.bhopMode = 99;
+    invalid.socdMode = static_cast<SocdMode>(99);
     invalid.activeBrakeProfileIndex = -1;
     invalid.humanizeMinUs = 500;
     invalid.humanizeMaxUs = -500;
@@ -68,6 +69,12 @@ int main() {
     Expect(sanitized.conflictIncrement == 0.01, "NaN conflict increment is clamped");
     Expect(sanitized.conflictDecrement == 0.01, "infinite conflict decrement is clamped");
     Expect(sanitized.quickTapMs == 1, "negative timing is clamped");
+    Expect(RuntimeConfig{}.socdMode == SocdMode::FULL, "legacy defaults preserve FULL mode");
+    Expect(sanitized.socdMode == SocdMode::OFF, "invalid SOCD mode disables assistance");
+    for (auto mode : {SocdMode::FULL, SocdMode::HUMANIZED, SocdMode::OFF}) {
+        RuntimeConfig config{}; config.socdMode = mode;
+        Expect(rcfg::Sanitize(config).socdMode == mode, "valid SOCD mode preserved");
+    }
     Expect(sanitized.bhopMode == 4, "invalid bhop mode falls back deterministically");
     Expect(sanitized.activeBrakeProfileIndex == 1, "invalid brake profile falls back deterministically");
     Expect(sanitized.humanizeMaxUs == sanitized.humanizeMinUs,

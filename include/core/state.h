@@ -56,6 +56,11 @@ struct alignas(64) State {
     uint32_t  generation[2]             = {};
     int64_t   conflictEnteredTimeMs[2]  = {};
 
+    // Native physical output is separate from synthetic brake ownership.
+    bool nativeLogical[4] = {};
+    Key socdLastKey[2] = {Key::D, Key::W};
+    uint64_t socdReleaseTimerId[2] = {}; // One-shot HUMANIZED loser release.
+
     // ── Timer tracking ──
     uint64_t expectedTimerId[5] = {};
     target_platform::TargetIdentity expectedTimerTarget[5] = {};
@@ -84,6 +89,9 @@ struct alignas(64) State {
 
         axisState[0] = axisState[1] = AxisState::None;
         generation[0] = generation[1] = 0;
+        memset(nativeLogical, 0, sizeof(nativeLogical));
+        socdReleaseTimerId[0] = socdReleaseTimerId[1] = 0;
+        socdLastKey[0] = Key::D; socdLastKey[1] = Key::W;
         conflictEnteredTimeMs[0] = conflictEnteredTimeMs[1] = 0;
 
         memset(expectedTimerId, 0, sizeof(expectedTimerId));

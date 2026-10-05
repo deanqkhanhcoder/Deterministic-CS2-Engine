@@ -82,6 +82,11 @@ bool Load(RuntimeConfig& c) {
     if (attr == INVALID_FILE_ATTRIBUTES) return false;
 
     const wchar_t* S = L"Strafe";
+    const wchar_t defaultMode[] = {static_cast<wchar_t>(L'0' + static_cast<int>(c.socdMode)), L'\0'};
+    wchar_t storedMode[16]{};
+    GetPrivateProfileStringW(S, L"socd_mode", defaultMode, storedMode, 16, s_iniPath);
+    c.socdMode = wcscmp(storedMode, L"0") == 0 ? SocdMode::FULL :
+        wcscmp(storedMode, L"1") == 0 ? SocdMode::HUMANIZED : SocdMode::OFF;
     c.quickTapMs       = ReadInt(S, L"QuickTapMs", c.quickTapMs);
     c.maxScaleMs       = ReadInt(S, L"MaxScaleMs", c.maxScaleMs);
     c.crouchMult       = ReadDbl(S, L"CrouchMult", c.crouchMult);
@@ -170,6 +175,7 @@ bool Save(const RuntimeConfig& c) {
     s_writeFailed = false;
 
     const wchar_t* S = L"Strafe";
+    WriteInt(S, L"socd_mode", static_cast<int>(c.socdMode));
     WriteInt(S, L"QuickTapMs", c.quickTapMs);
     WriteInt(S, L"MaxScaleMs", c.maxScaleMs);
     WriteDbl(S, L"CrouchMult", c.crouchMult);
