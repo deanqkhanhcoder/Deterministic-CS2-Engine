@@ -4,6 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 #include <windows.h>
+#include <cstdint>
 
 #include "target_platform.h"
 
@@ -38,6 +39,9 @@ void ReconcileTargetFocus();
 // Drains target-bound physical WASD edges on the message thread. Low-level
 // hook callbacks only enqueue these records.
 void DrainRoutedInputEvents();
+
+// Hook-owner thread only: drain queued edges, then read physical truth.
+std::uint32_t PhysicalMovementMask();
 
 // Owner-thread transition; reject held WASD, cancel and release pending brakes.
 bool PrepareSocdModeChange();

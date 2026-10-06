@@ -86,3 +86,11 @@ assert "LLKHF_INJECTED" in keyboard_injection_filter
 assert "dwExtraInfo" not in keyboard_injection_filter
 mouse = function_body("static LRESULT CALLBACK MouseProc")
 assert "LLMHF_INJECTED" in mouse and "dwExtraInfo" not in mouse
+
+# SOCD key-up changes Windows async state, not the physical edge ledger.
+reconciliation = (Path(__file__).parents[2] / "src/core/state_reconciliation.cpp").read_text(encoding="utf-8")
+assert "capture::PhysicalMovementMask()" in reconciliation
+for key in "WSAD":
+    assert f"GetAsyncKeyState('{key}')" not in reconciliation
+focus_regain = source.split("else if (!wasActive && isActive)", 1)[1].split("engine::RebuildState();", 1)[0]
+assert "s_wasdPhysDown[" not in focus_regain

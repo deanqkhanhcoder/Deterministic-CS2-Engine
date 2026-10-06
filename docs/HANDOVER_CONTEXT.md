@@ -186,6 +186,13 @@ Windows 11 23H2 và valid-input/end-to-end benchmark chưa được kiểm tra t
 
 ## Release v29 — Dashboard và Injection Path Indicator
 
+### SOCD sustained hold — sửa reconcile ngày 2026-10-06
+
+- FULL/HUMANIZED giữ last-key priority; A → A+D duy trì D, nhả D phục hồi A trong cùng batch. Không có timeout 30 ms tự neutralize; Auto Counter-Strafe chỉ được arm khi cả hai phím vật lý trên trục đã nhả.
+- Reconcile cũ press lại phím SOCD bị suppress rồi release ngay, tạo injection thừa mỗi lần rebuild. Reconcile mới tính desired output theo priority trước và chỉ gửi phần khác biệt; giữ deadline HUMANIZED 8 ms và deadline auto-brake đã arm.
+- `capture::PhysicalMovementMask()` drain physical edges trên hook-owner thread. Rebuild/focus regain không ghi đè WASD từ `GetAsyncKeyState`, vì API này phản ánh cả key-up synthetic. Snapshot OS chỉ bootstrap WASD một lần trước injection đầu tiên.
+- Regression kiểm tra A/D và W/S ở cả hai thứ tự: giữ phím đầu 500 ms, giữ cả hai 2000 ms với reconcile/repeat mỗi 1 ms, nhả winner phục hồi survivor, rồi nhả survivor ngay hoặc sau 500 ms. Assert từng key-down/up, timestamp 8 ms, không schedule brake khi còn held. Code reconcile cũ fail assert timeline; bản mới pass cùng 20000 diagonal/focus cycles.
+
 - `ui/src/index.css` định nghĩa palette sáng/tối qua `--bg`, `--fg`, `--card`, `--border`, `--muted`, `--accent` và màu semantic. Class `dark` trên `<html>`; không glow, neon cyan/amber hay animate-ping. `theme.ts` ưu tiên localStorage `marco_theme`, fallback `prefers-color-scheme`; nút header lưu lựa chọn và tự theo hệ thống khi chưa chọn.
 - `DashboardCards.tsx` tách `KPICard`, `ChartCard`, `StatusStrip` với props TypeScript. Telemetry dùng 4 KPI bằng nhau, hai cột chart/matrix ở desktop, một status strip; mobile giữ 2 KPI/cột. Chart giữ canvas mounted qua loading/empty state, palette được cập nhật theo theme trong vòng rAF, không thay đổi sliding buffer hoặc physics.
 - `syscall_dispatch.cpp` publish `std::atomic<const char*> g_injection_path` sau resolve đầu tiên bằng release store; IPC acquire load và xuất root field `injection_path: "ntuser" | "user32"` qua REST và mọi event SSE. Không resolve lại từ IPC, không thêm endpoint. Frontend hiển thị native xanh, fallback vàng; chưa có packet thì chờ telemetry.

@@ -318,7 +318,7 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
 
 bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch) {
     const int ki_c = ki(counterKey);
-    if (s_state.phys[ki_c] || s_state.suspended ||
+    if (s_state.phys[ki(relKey)] || s_state.phys[ki_c] || s_state.suspended ||
         !target_platform::IsExpectedTargetActive(batch.expectedTarget)) return false;
     const RuntimeConfig& rc = rcfg::Get();
     // No min-tap guard: a short tap while already moving fast still needs a

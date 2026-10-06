@@ -16,6 +16,7 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace diagonal_test {
 void SetLiveTarget(const target_platform::TargetIdentity& target);
@@ -36,13 +37,21 @@ target_platform::TargetIdentity g_foreignTarget;
 std::atomic<bool> g_flipAfterSend{false};
 std::atomic<int> g_foreignDispatches{0};
 std::atomic<uint64_t> g_sendCalls{0};
+struct InputEdge { Key key; bool down; int64_t timeUs; };
+std::vector<InputEdge>* g_edgeTrace = nullptr;
 
-UINT CaptureInputs(UINT count, INPUT*, int inputSize) {
+UINT CaptureInputs(UINT count, INPUT* inputs, int inputSize) {
     assert(inputSize == static_cast<int>(sizeof(INPUT)));
     if (diagonal_test::GetLiveTarget() != g_routedTarget) {
         g_foreignDispatches.fetch_add(1, std::memory_order_relaxed);
     }
     g_sendCalls.fetch_add(count, std::memory_order_relaxed);
+    if (g_edgeTrace) for (UINT i = 0; i < count; ++i) {
+        for (int key = 0; key < 4; ++key) if (inputs[i].ki.wScan == keymap::ScanCode[key]) {
+            g_edgeTrace->push_back({static_cast<Key>(key), (inputs[i].ki.dwFlags & KEYEVENTF_KEYUP) == 0, timing::NowUs()});
+            break;
+        }
+    }
     if (g_flipAfterSend.exchange(false, std::memory_order_acq_rel)) {
         diagonal_test::SetLiveTarget(g_foreignTarget);
     }
@@ -185,6 +194,61 @@ void AssertAutoBrake(SocdMode mode, bool physicalCounterTap = false) {
     std::cout << "Auto Counter-Strafe mode=" << static_cast<int>(mode)
               << " burst=" << brakeUs << " us, stationary after friction\n";
 }
+
+void AssertWinnerReleaseTimeline(SocdMode mode, Key first, int64_t survivorHoldUs) {
+    RuntimeConfig config; config.socdMode = mode; rcfg::Apply(config);
+    { std::lock_guard<std::mutex> lock(engine::s_stateMutex); engine::s_state.Reset(); }
+    diagonal_test::ResetScheduleTrace();
+    const Key winner = keymap::Opposite[ki(first)];
+    const Axis axis = keymap::KeyAxis[ki(first)];
+    std::vector<InputEdge> events;
+    g_edgeTrace = &events;
+    engine::HandleKeyDown(first, true, g_routedTarget);
+    diagonal_test::AdvanceUs(500000);
+    engine::HandleKeyDown(winner, true, g_routedTarget);
+    const int64_t transitionUs = timing::NowUs();
+    const bool delayed = mode == SocdMode::HUMANIZED;
+    for (int ms = 1; ms <= 2000; ++ms) {
+        diagonal_test::AdvanceUs(1000);
+        diagonal_test::ExpireDueTimers();
+        engine::HandleKeyDown(first, true, g_routedTarget); // physical repeats
+        engine::HandleKeyDown(winner, true, g_routedTarget);
+        engine::InjectionBatch batch(g_routedTarget);
+        { std::lock_guard<std::mutex> lock(engine::s_stateMutex); engine::ReconcileLogicalStateFromPhysical(batch); }
+        engine::FlushAndCommitLogicalState(batch);
+        const auto state = engine::GetState();
+        assert(state.phys[ki(first)] && state.phys[ki(winner)]);
+        assert(state.logical[ki(winner)]);
+        assert(state.logical[ki(first)] == (delayed && ms < 8));
+        assert(events.size() == (delayed && ms < 8 ? 2u : 3u));
+        assert(diagonal_test::ScheduleTraceCount() == (delayed ? 1u : 0u));
+    }
+    assert(events[0].key == first && events[0].down);
+    assert(events[delayed ? 1 : 2].key == winner && events[delayed ? 1 : 2].down);
+    const auto& release = events[delayed ? 2 : 1];
+    assert(release.key == first && !release.down && release.timeUs == transitionUs + (delayed ? 8000 : 0));
+    assert(!timing::AreTimersActive());
+    engine::HandleKeyUp(winner, true, g_routedTarget);
+    assert(events.size() == 5);
+    assert(events[3].key == winner && !events[3].down);
+    assert(events[4].key == first && events[4].down && events[4].timeUs == events[3].timeUs);
+    assert(!engine::GetState().logical[ki(winner)] && engine::GetState().logical[ki(first)]);
+    assert(engine::GetState().phys[ki(first)] && !engine::GetState().phys[ki(winner)]);
+    assert(!timing::AreTimersActive()); // no brake while the survivor is held
+    // Cover both immediate final release and running in the restored direction.
+    diagonal_test::AdvanceUs(survivorHoldUs);
+    engine::HandleKeyUp(first, true, g_routedTarget);
+    assert(events.size() == (survivorHoldUs ? 7u : 6u) && !events[5].down && events[5].key == first);
+    if (survivorHoldUs) assert(events[6].down && events[6].key == winner);
+    assert(engine::GetState().axisState[ai(axis)] == AxisState::None);
+    assert(diagonal_test::ScheduleTraceCount() == (delayed ? 1u : 0u) + (survivorHoldUs ? 1u : 0u));
+    diagonal_test::AdvanceUs(350000);
+    diagonal_test::ExpireDueTimers();
+    assert(events.size() == (survivorHoldUs ? 8u : 6u));
+    if (survivorHoldUs) assert(events[7].key == winner && !events[7].down);
+    AssertSettled();
+    g_edgeTrace = nullptr;
+}
 }
 
 int main() {
@@ -314,6 +378,9 @@ int main() {
         AssertAutoBrake(mode);
         AssertAutoBrake(mode, true);
     }
+    for (auto mode : {SocdMode::FULL, SocdMode::HUMANIZED})
+        for (auto first : {Key::A, Key::D, Key::W, Key::S})
+            for (auto holdUs : {0LL, 500000LL}) AssertWinnerReleaseTimeline(mode, first, holdUs);
 
     RuntimeConfig humanized; humanized.socdMode = SocdMode::HUMANIZED;
     rcfg::Apply(humanized);

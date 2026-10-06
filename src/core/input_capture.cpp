@@ -51,6 +51,7 @@ static bool s_hkDownF2 = false;
 static bool s_hkDownF3 = false;
 static bool s_hkDownF6 = false;
 static bool s_wasdPhysDown[4] = {false};
+static bool s_physicalMovementInitialized = false;
 static bool s_lctrlPhysDown = false;
 static bool s_cPhysDown = false;
 static bool s_lshiftPhysDown = false;
@@ -161,6 +162,13 @@ bool PrepareSocdModeChange() {
     return true;
 }
 
+std::uint32_t PhysicalMovementMask() {
+    while (s_routedEvents.Size() != 0) DrainRoutedInputEvents();
+    std::uint32_t mask = 0;
+    for (int i = 0; i < 4; ++i) if (s_wasdPhysDown[i]) mask |= 1u << i;
+    return mask;
+}
+
 void ReconcileTargetFocus() {
     (void)ReconcileTargetFocusNow();
 }
@@ -239,10 +247,8 @@ static bool ReconcileTargetFocusNow() {
         
         // Sync local space state with actual hardware truth
         s_physSpaceDown = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
-        s_wasdPhysDown[ki(Key::W)] = (GetAsyncKeyState('W') & 0x8000) != 0;
-        s_wasdPhysDown[ki(Key::S)] = (GetAsyncKeyState('S') & 0x8000) != 0;
-        s_wasdPhysDown[ki(Key::A)] = (GetAsyncKeyState('A') & 0x8000) != 0;
-        s_wasdPhysDown[ki(Key::D)] = (GetAsyncKeyState('D') & 0x8000) != 0;
+        // WASD truth comes from hook edges: GetAsyncKeyState includes our
+        // synthetic releases and would erase a physically held SOCD loser.
         s_lctrlPhysDown = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
         s_cPhysDown = (GetAsyncKeyState('C') & 0x8000) != 0;
         s_lshiftPhysDown = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
@@ -598,6 +604,13 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, 
 
 bool Install(HWND hwnd) {
     s_hwnd = hwnd;
+    if (!s_physicalMovementInitialized) {
+        // Bootstrap once, before this process has injected any movement.
+        constexpr int virtualKeys[4] = {'W', 'S', 'A', 'D'};
+        for (int i = 0; i < 4; ++i)
+            s_wasdPhysDown[i] = (GetAsyncKeyState(virtualKeys[i]) & 0x8000) != 0;
+        s_physicalMovementInitialized = true;
+    }
     s_routedEvents.Clear();
     s_routedWakeGate.Reset();
     s_foregroundPublication.Store(

@@ -66,7 +66,15 @@ bool IsExpectedTargetActive(const TargetIdentity& expected) noexcept {
 }
 
 namespace bhop { void ForceSpaceSync(bool) {} }
-namespace capture { bool Reinstall() { return true; } }
+namespace capture {
+bool Reinstall() { return true; }
+std::uint32_t PhysicalMovementMask() {
+    const auto state = engine::GetState();
+    std::uint32_t mask = 0;
+    for (int i = 0; i < 4; ++i) if (state.phys[i]) mask |= 1u << i;
+    return mask;
+}
+}
 namespace telemetry { ForensicRingBuffer g_forensicBuffer; }
 namespace dlog { void Write(Subsystem, Level, const char*, int, const char*, ...) {} }
 
