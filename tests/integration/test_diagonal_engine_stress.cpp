@@ -163,7 +163,7 @@ void AssertAutoBrake(SocdMode mode, bool physicalCounterTap = false) {
     const auto releaseUs = timing::NowUs();
     const auto deadline = diagonal_test::TimerDeadlineUs(Key::D);
     const auto brakeUs = deadline - releaseUs;
-    assert(brakeUs >= 94000 && brakeUs <= 109000);
+    assert(brakeUs >= 94000 && brakeUs <= 110000);
     assert(engine::g_lastBrakeUs.load() == brakeUs);
     assert(diagonal_test::ScheduleTraceCount() == 1);
     assert(diagonal_test::ScheduledKey(0) == Key::D);
@@ -193,6 +193,83 @@ void AssertAutoBrake(SocdMode mode, bool physicalCounterTap = false) {
     AssertSettled();
     std::cout << "Auto Counter-Strafe mode=" << static_cast<int>(mode)
               << " burst=" << brakeUs << " us, stationary after friction\n";
+}
+
+void AssertManualCounterBrake(SocdMode mode, Key first, int64_t manualUs,
+                             int shapingCase) {
+    RuntimeConfig config;
+    config.socdMode = mode;
+    auto& profile = config.brakeProfiles[config.activeBrakeProfileIndex];
+    if (shapingCase == 1) profile.brake_bias_multiplier = 0.5;
+    if (shapingCase == 2) profile.authority_bias_ms = -30.0;
+    if (shapingCase == 3) profile.aggressiveness_curve = 0.5;
+    rcfg::Apply(config);
+    { std::lock_guard<std::mutex> lock(engine::s_stateMutex); engine::s_state.Reset(); }
+    const Key manual = keymap::Opposite[ki(first)];
+    const Axis axis = keymap::KeyAxis[ki(first)];
+    engine::HandleKeyDown(first, true, g_routedTarget);
+    diagonal_test::AdvanceUs(500000);
+    engine::HandleKeyDown(manual, true, g_routedTarget);
+    diagonal_test::AdvanceUs(8000);
+    diagonal_test::ExpireDueTimers();
+    engine::HandleKeyUp(first, true, g_routedTarget);
+    const auto beforeManual = engine::GetState().vel;
+    diagonal_test::AdvanceUs(manualUs);
+    auto residual = beforeManual;
+    movement::AdvanceVelocity(residual, timing::NowUs(), config);
+    const double v = axis == Axis::X ? residual.vx : residual.vy;
+    const double orth = axis == Axis::X ? residual.vy : residual.vx;
+    const int pureMs = movement::CalculateStopDur2D(
+        std::abs(v), orth, 0, false, profile.accuracyThreshold, config);
+    const Key brake = axis == Axis::X ? (v > 0 ? Key::A : Key::D)
+                                     : (v > 0 ? Key::S : Key::W);
+    diagonal_test::ResetScheduleTrace();
+    engine::HandleKeyUp(manual, true, g_routedTarget);
+    const auto state = engine::GetState();
+    assert(std::abs(state.vel.vx - residual.vx) < 1e-9);
+    assert(std::abs(state.vel.vy - residual.vy) < 1e-9);
+    assert(state.vel.lastUs == timing::NowUs());
+    if (pureMs == 0) {
+        assert(!timing::AreTimersActive());
+        AssertSettled();
+        return;
+    }
+    assert(diagonal_test::ScheduleTraceCount() == 1);
+    assert(diagonal_test::ScheduledKey(0) == brake);
+    assert(engine::IsCounterStrafeHoldingKey(brake, g_routedTarget));
+    const auto durationUs = diagonal_test::TimerDeadlineUs(brake) - timing::NowUs();
+    assert(durationUs >= pureMs * 1000LL);
+    assert(state.logical[ki(brake)]);
+    assert(!state.logical[ki(keymap::Opposite[ki(brake)])]);
+    diagonal_test::AdvanceUs(durationUs - 1);
+    diagonal_test::ExpireDueTimers();
+    assert(engine::GetState().logical[ki(brake)]);
+    diagonal_test::AdvanceUs(1);
+    diagonal_test::ExpireDueTimers();
+    const auto stopped = engine::GetState().vel;
+    assert(std::hypot(stopped.vx, stopped.vy) < 34.0);
+    AssertSettled();
+}
+
+void AssertResidualDuration2D() {
+    RuntimeConfig config;
+    rcfg::Apply(config);
+    for (int wishMode = 0; wishMode < 3; ++wishMode) {
+        std::lock_guard<std::mutex> lock(engine::s_stateMutex);
+        engine::s_state.Reset();
+        engine::s_state.vel.vx = 220.0;
+        engine::s_state.vel.vy = 80.0;
+        engine::s_state.vel.lastUs = timing::NowUs();
+        if (wishMode == 1) engine::s_state.logical[ki(Key::W)] = true;
+        if (wishMode == 2) engine::s_state.logical[ki(Key::S)] = true;
+        const int pureMs = movement::CalculateStopDur2D(
+            220.0, 80.0, wishMode, false, 34.0, config);
+        // The tracked vector already includes diagonal motion. Neither a
+        // component cap nor a diagonal tick deduction may shorten this hold.
+        assert(engine::CalculateTrueBrakeUs(Key::D, Axis::X) == pureMs * 1000LL);
+    }
+    std::lock_guard<std::mutex> lock(engine::s_stateMutex);
+    engine::s_state.Reset();
 }
 
 void AssertWinnerReleaseTimeline(SocdMode mode, Key first, int64_t survivorHoldUs) {
@@ -238,14 +315,22 @@ void AssertWinnerReleaseTimeline(SocdMode mode, Key first, int64_t survivorHoldU
     // Cover both immediate final release and running in the restored direction.
     diagonal_test::AdvanceUs(survivorHoldUs);
     engine::HandleKeyUp(first, true, g_routedTarget);
-    assert(events.size() == (survivorHoldUs ? 7u : 6u) && !events[5].down && events[5].key == first);
-    if (survivorHoldUs) assert(events[6].down && events[6].key == winner);
+    assert(events.size() == (survivorHoldUs ? 7u : 5u));
+    if (survivorHoldUs) {
+        assert(!events[5].down && events[5].key == first);
+        assert(events[6].down && events[6].key == winner);
+    } else {
+        // Momentum is still in the winner's direction. The restored first
+        // key must continue braking when its physical hold ends immediately.
+        assert(engine::GetState().logical[ki(first)]);
+    }
     assert(engine::GetState().axisState[ai(axis)] == AxisState::None);
-    assert(diagonal_test::ScheduleTraceCount() == (delayed ? 1u : 0u) + (survivorHoldUs ? 1u : 0u));
+    assert(diagonal_test::ScheduleTraceCount() == (delayed ? 1u : 0u) + 1u);
     diagonal_test::AdvanceUs(350000);
     diagonal_test::ExpireDueTimers();
     assert(events.size() == (survivorHoldUs ? 8u : 6u));
     if (survivorHoldUs) assert(events[7].key == winner && !events[7].down);
+    else assert(events[5].key == first && !events[5].down);
     AssertSettled();
     g_edgeTrace = nullptr;
 }
@@ -373,7 +458,12 @@ int main() {
         AssertSettled();
     }
 
+    AssertResidualDuration2D();
     for (auto mode : {SocdMode::FULL, SocdMode::HUMANIZED, SocdMode::OFF}) {
+        for (auto first : {Key::A, Key::D, Key::W, Key::S})
+            for (auto manualUs : {15625LL, 23000LL, 46875LL, 78125LL, 109375LL, 250000LL})
+                for (int shapingCase = 0; shapingCase < 4; ++shapingCase)
+                    AssertManualCounterBrake(mode, first, manualUs, shapingCase);
         for (auto first : {Key::A, Key::D, Key::W, Key::S}) AssertSustainedHold(mode, first);
         AssertAutoBrake(mode);
         AssertAutoBrake(mode, true);

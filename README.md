@@ -18,7 +18,7 @@ Choose **Physics parameters → SOCD control**. `socdMode` persists as `[Strafe]
 
 Release W/A/S/D before switching modes or restoring configurations. Changes apply and save immediately; failure to release owned input rejects the change. Safe Mode snapshots include the SOCD mode. FULL/HUMANIZED deliberately keep moving in the newest held direction; OFF cancels opposing held keys. A brake ends at the accuracy threshold; remaining velocity decays to zero through friction.
 
-Regression tests hold A+D and W+S for 2000 ms in all modes and both press orders, assert stable output/no repeated injection, and verify A→D release braking for 94–109 ms with default movement settings, including physical counter-key taps. `cmake --build build/make-tests --target check` runs these tests.
+Regression tests hold A+D and W+S for 2000 ms in all modes and both press orders, assert stable output/no repeated injection, and verify A→D release braking for 94–110 ms with default movement settings, including physical counter-key taps. Manual counter-strafe tests verify residual velocity, brake direction, full timer duration, and speed below 34 u/s after compensation. `cmake --build build/make-tests --target check` runs these tests.
 
 ## Release v29 — Dashboard themes and injection path
 
@@ -44,7 +44,7 @@ UI verification: `cd ui`, then `npm test` and `npm run build` (includes TypeScri
 - **Exact Valve Physics Simulation**:
   - Sequential physics order: runs friction reduction followed by active opposite acceleration.
   - Zero-overlap counter-strafe: eliminates overlapping conflicting keys (overlap = 0 µs) to ensure maximum deceleration per tick.
-  - Diagonal counter-strafe normalization: scales component velocity by $1/\sqrt{2} \approx 0.707$ and trims 1 tick (~15.6 ms) of excess brake hold to eliminate over-counter-strafe and reverse recoil jerk.
+  - Residual counter-strafe: carries velocity through manual direction changes and simulates the remaining brake from the actual 2D vector. Profile shaping preserves the required physics ticks within the configured safety horizon; timer conversion rounds up to retain the final tick.
   - Directional momentum memory across rapid A-D strafes.
 - **Handover Documentation**: See [`docs/HANDOVER_CONTEXT.md`](file:///c:/Users/toanpq/Desktop/marco/docs/HANDOVER_CONTEXT.md) for full architectural blueprints, mathematical specifications, and historical bug resolutions for incoming engineers/AI agents.
 - **Safe Mode with Snapshot Reversion**: Entering Safe Mode applies temporary clamp overlays without destroying user settings. Exiting or triggering Revert to Snapshot instantly restores the pre-safemode configuration.

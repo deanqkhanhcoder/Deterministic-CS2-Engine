@@ -11,8 +11,10 @@
 namespace movement {
 
 // True Source Engine 2D Velocity Estimator
-// Reconstructs the (v_x, v_y) vector based on how long keys were held,
+// Reconstructs the (v_x, v_y) vector FROM REST based on how long keys were held,
 // taking into account the sv_maxspeed circular clamping.
+// Use AdvanceVelocity for direction changes and manual counter-strafe; this
+// hold-duration LUT has no knowledge of carried momentum or previous wishes.
 void EstimateTrueVelocity2D(int64_t heldUsX, int64_t heldUsY, int signX, int signY, const RuntimeConfig& rc, double& outVx, double& outVy);
 
 // Integrates the tracked velocity (friction then accelerate per tick, with a
@@ -42,7 +44,8 @@ int CalculateStopDur2D(double vx,
                        const RuntimeConfig& rc);
 
 // Applies profile shaping without allowing floating-point overflow or a
-// duration beyond the configured LUT safety horizon. Returns zero when no
+// duration below the physical minimum or beyond the configured LUT safety
+// horizon (the hard cap takes precedence). Returns zero when no
 // counter-strafe is required.
 int ShapeBrakeDurationMs(int pureDurMs,
                          const RuntimeConfig::BrakeProfile& profile,

@@ -113,17 +113,49 @@ int main() {
     const int boundedInverted =
         ShapeBrakeDurationMs(100, rc.brakeProfiles[1], invertedBounds);
 
-    Expect(legacyNarrow == 109, "17 u/s legacy threshold remains deterministic");
+    Expect(legacyNarrow == 110, "17 u/s legacy threshold holds all seven ticks");
     Expect(nonFiniteLookup >= 0 && saturatedLookup >= 0,
            "non-finite and out-of-range velocity must not enter float-to-int UB");
     Expect(rifle == 94, "rifle 50 u/s threshold releases one tick earlier");
-    Expect(pistol == 78, "pistol 80 u/s threshold releases two ticks earlier");
+    Expect(pistol == 79, "pistol 80 u/s threshold holds all five ticks");
     Expect(alreadyAccurate == 0,
            "velocity already below profile threshold must not counter-strafe");
     Expect(ShapeBrakeDurationMs(0, rc.brakeProfiles[1], rc) == 0,
            "zero stop duration must not become a minimum synthetic hold");
-    Expect(rifleBrake == 88,
-           "rifle profile shaping includes the six millisecond latency margin");
+    Expect(rifleBrake == rifle,
+           "latency margin must not shorten the simulated physical minimum");
+    Expect(CalculateStopDur2D(34.0, 0.0, 0, false, 34.0, rc) == 16,
+           "speed at the threshold still needs a tick to fall strictly below it");
+    Expect(CalculateStopDur2D(33.99, 0.0, 0, false, 34.0, rc) == 0,
+           "speed already strictly below threshold needs no brake");
+
+    for (double speed = 34.0; speed <= 250.0; speed += 0.5) {
+        VelocityTracker replay;
+        replay.vx = speed;
+        replay.wishX = -1;
+        replay.lastUs = 0;
+        int ticks = 0;
+        while (replay.vx >= 34.0 && ticks < 100) {
+            AdvanceVelocity(replay, ++ticks * kTick, rc);
+        }
+        const int durationMs = CalculateStopDur2D(speed, 0.0, 0, false, 34.0, rc);
+        Expect(durationMs == static_cast<int>(std::ceil(ticks * 15.625)),
+               "stop simulation retains every tick required by velocity replay");
+        Expect(std::abs(replay.vx) < 34.0,
+               "whole-tick brake replay reaches the strict accuracy threshold");
+    }
+
+    for (int ticks = 1; ticks <= 7; ++ticks) {
+        const int physicalMs = static_cast<int>(std::ceil(ticks * 15.625));
+        for (int shapingCase = 0; shapingCase < 4; ++shapingCase) {
+            auto weak = rc.brakeProfiles[1];
+            if (shapingCase == 1) weak.brake_bias_multiplier = 0.5;
+            if (shapingCase == 2) weak.authority_bias_ms = -30.0;
+            if (shapingCase == 3) weak.aggressiveness_curve = 0.5;
+            Expect(ShapeBrakeDurationMs(physicalMs, weak, rc) >= physicalMs,
+                   "profile shaping preserves all residual braking ticks");
+        }
+    }
     Expect(boundedExtreme == rc.lutMaxMs,
            "extreme profile shaping must remain inside the safety horizon");
     Expect(boundedNonFinite == rc.lutMaxMs,

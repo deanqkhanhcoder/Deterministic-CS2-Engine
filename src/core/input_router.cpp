@@ -179,7 +179,7 @@ void HandleKeyUp(Key k, bool routeSemantic,
 
                 bool strafed = macroBrakePending;
                 if (!macroBrakePending && !s_state.phys[ki_opp]) {
-                    strafed = AutoCounterStrafe(k, oppK, ax, heldUs, batch);
+                    strafed = AutoCounterStrafe(k, oppK, ax, batch);
                 }
 
                 if (!strafed && s_state.logical[ki_k]) {

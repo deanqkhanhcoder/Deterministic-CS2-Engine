@@ -78,7 +78,7 @@ static int SimulateStopDurationMs(double vx,
                            const RuntimeConfig& rc) {
     double curVx = std::abs(vx);
     double curVy = std::abs(vy);
-    if (curVx <= releaseVelocityWindow) return 0;
+    if (curVx < releaseVelocityWindow) return 0;
 
     // Frame of reference: velocity along +X/+Y, so opposing key = -X.
     const double wishX = -1.0;
@@ -89,25 +89,16 @@ static int SimulateStopDurationMs(double vx,
 
     constexpr double dt = 1.0 / 64.0;
     int ticks = 0;
-    double previousVx = curVx;
-    while (ticks < 100 && curVx > releaseVelocityWindow) {
-        previousVx = curVx;
+    while (ticks < 100 && curVx >= releaseVelocityWindow) {
         PmFriction(curVx, curVy, rc, dt);
         PmAccelerate(curVx, curVy, wishX, wishY, rc.physMaxSpeed, rc, dt);
         ++ticks;
     }
 
-    // Sub-tick crossing time, then round UP to a whole tick: the engine
-    // only integrates whole ticks of the held key.
-    double exactTicks = static_cast<double>(ticks);
-    if (ticks > 0 && curVx <= releaseVelocityWindow &&
-        previousVx > releaseVelocityWindow && previousVx != curVx) {
-        exactTicks = static_cast<double>(ticks - 1) +
-            (previousVx - releaseVelocityWindow) / (previousVx - curVx);
-    }
-
-    const double alignedMs = std::ceil(exactTicks) * 15.625;
-    return static_cast<int>(alignedMs + 0.5);
+    // Keep every simulated tick, then round UP to milliseconds so conversion
+    // to the release timer never loses the tail of the final 15.625 ms tick.
+    const double alignedMs = static_cast<double>(ticks) * 15.625;
+    return static_cast<int>(std::ceil(alignedMs));
 }
 
 void InitLUT() {
@@ -244,7 +235,9 @@ int ShapeBrakeDurationMs(int pureDurMs,
 
     const double compensated = shaped - static_cast<double>(rc.latencyMarginMs);
     const int safeMaxMs = std::max(1, rc.lutMaxMs);
-    const int safeMinMs = std::clamp(rc.minStopMs, 1, safeMaxMs);
+    // Bias, curve and latency compensation may extend the hold, but cannot
+    // remove ticks needed to stop. Preserve the configured hard safety cap.
+    const int safeMinMs = std::clamp(std::max(rc.minStopMs, pureDurMs), 1, safeMaxMs);
     const double bounded = std::clamp(
         compensated,
         static_cast<double>(safeMinMs),

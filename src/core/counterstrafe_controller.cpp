@@ -202,7 +202,7 @@ alignas(64) std::atomic<int64_t> g_lastBrakeUs{0};
 alignas(64) std::atomic<int64_t> g_lastPreSpeedTenths{0};
 alignas(64) std::atomic<uint32_t> g_lastBrakeResultCode{0}; // 0=IDLE, 1=FINE, 2=EARLY, 3=OVER
 
-int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
+int64_t CalculateTrueBrakeUs(Key relKey, Axis ax) {
     const RuntimeConfig& rc = rcfg::Get();
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
     
@@ -213,35 +213,11 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     double vx = s_state.vel.vx;
     double vy = s_state.vel.vy;
     
-    // Check for diagonal movement context
     Axis orthAx = (ax == Axis::X) ? Axis::Y : Axis::X;
     Key orthPos = keymap::AxisPosKey[ai(orthAx)];
     Key orthNeg = keymap::AxisNegKey[ai(orthAx)];
 
-    bool orthPhys = s_state.phys[ki(orthPos)] || s_state.phys[ki(orthNeg)];
-    bool orthLog  = s_state.logical[ki(orthPos)] || s_state.logical[ki(orthNeg)];
-    bool orthRecent = (timing::NowMs() - s_state.mem.lastReleaseTimeMs[ai(orthAx)]) < 120;
-    bool isDiagonal = orthPhys || orthLog || orthRecent ||
-                      (std::abs(vx) > 30.0 && std::abs(vy) > 30.0);
-
-    // Cross-check with continuous physical hold time of the releasing key.
-    // If the player held this key continuously (e.g. running for >200ms),
-    // velocity along this direction cannot be less than the physical hold acceleration.
-    double physVx = 0.0, physVy = 0.0;
-    movement::EstimateTrueVelocity2D(
-        (ax == Axis::X) ? heldUs : 0,
-        (ax == Axis::Y) ? heldUs : 0,
-        1, 1, rc, physVx, physVy);
-    double sustainedMinV = (ax == Axis::X) ? physVx : physVy;
-
-    // In CS2, when strafing diagonally, vector speed is capped by sv_maxspeed (250 u/s),
-    // so steady-state per-axis component speed is capped at 250 / sqrt(2) ≈ 176.78 u/s.
-    if (isDiagonal) {
-        constexpr double kInvSqrt2 = 0.7071067811865475;
-        sustainedMinV *= kInvSqrt2;
-    }
-
-    // 3. Determine wish_mode for the offline LUT
+    // 2. Preserve the orthogonal wish in the stop simulation.
     int wish_mode = 0;
     double v_orth = (ax == Axis::X) ? vy : vx;
     if (std::abs(v_orth) > 0.1) {
@@ -255,28 +231,20 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
         }
     }
     
-    // Speed along the direction of the key being released. If we are already
-    // moving the other way, pressing the opposite key would accelerate us.
+    // AutoCounterStrafe selects this reference direction from residual velocity.
+    // A hold-from-rest estimate cannot provide a lower bound here: a manual
+    // counter press can still leave us moving opposite to the released key.
     const double relSign = (relKey == Key::D || relKey == Key::W) ? 1.0 : -1.0;
-    double v_target = ((ax == Axis::X) ? vx : vy) * relSign;
-    if (sustainedMinV > v_target) {
-        v_target = sustainedMinV;
-    }
-    if (isDiagonal) {
-        constexpr double kMaxDiagAxisSpeed = 250.0 * 0.7071067811865475; // ~176.78 u/s
-        if (v_target > kMaxDiagAxisSpeed) {
-            v_target = kMaxDiagAxisSpeed;
-        }
-    }
+    const double v_target = ((ax == Axis::X) ? vx : vy) * relSign;
     if (v_target <= 0.0) return 0;
     
-    // 4. Profile-aware deterministic stop simulation
+    // 3. Profile-aware deterministic stop simulation
     // In CS2, weapon firing accuracy requires velocity to decrease below the
     // weapon's true accuracy threshold (< 34.0 u/s, or 17.0–20.0 u/s for complete stop).
     // Clamp threshold to <= 34.0 u/s so legacy config values (80/70 u/s) never
     // truncate the simulation at 3-4 ticks (47-63 ms).
     double stopThreshold = profile.accuracyThreshold;
-    if (stopThreshold > 34.0 || stopThreshold < 1.0) {
+    if (!std::isfinite(stopThreshold) || stopThreshold > 34.0 || stopThreshold < 1.0) {
         stopThreshold = 20.0;
     }
 
@@ -292,19 +260,9 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
         return 0;
     }
 
-    // When releasing from diagonal strafe, compensate for the diagonal projection
-    // by trimming ~1 tick (~15.6 ms) of excess brake duration to eliminate over-counter-strafe.
-    if (isDiagonal && pureDurMs > 16) {
-        pureDurMs = std::max(16, pureDurMs - 16);
-    }
-
-    // 5. Apply authority biases through the bounded, deterministic policy.
-    // Do not allow profile multipliers (< 1.0) or negative bias to reduce the
-    // brake duration below the physical ticks required to reach the target threshold.
+    // 4. The simulation already accounts for the actual 2D velocity and wish.
+    // Shaping must preserve its physical minimum, including for manual brakes.
     int finalDurMs = movement::ShapeBrakeDurationMs(pureDurMs, profile, rc);
-    if (finalDurMs < pureDurMs && profile.brake_bias_multiplier < 1.0) {
-        finalDurMs = pureDurMs;
-    }
     int64_t baseBrakeUs = (int64_t)finalDurMs * 1000LL;
     int64_t effectiveBrakeUs = std::max(100LL, baseBrakeUs);
     
@@ -316,14 +274,20 @@ int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs) {
     return effectiveBrakeUs;
 }
 
-bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch) {
-    const int ki_c = ki(counterKey);
-    if (s_state.phys[ki(relKey)] || s_state.phys[ki_c] || s_state.suspended ||
+bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, InjectionBatch& batch) {
+    if (s_state.phys[ki(relKey)] || s_state.phys[ki(counterKey)] || s_state.suspended ||
         !target_platform::IsExpectedTargetActive(batch.expectedTarget)) return false;
     const RuntimeConfig& rc = rcfg::Get();
-    // No min-tap guard: a short tap while already moving fast still needs a
+    // Close the manual input interval using the previous logical wish before
+    // selecting the brake direction. Keep the same manual key held if the
+    // player has not yet canceled the original momentum.
+    movement::AdvanceVelocity(s_state.vel, timing::NowUs(), rc);
+    const double residual = ax == Axis::X ? s_state.vel.vx : s_state.vel.vy;
+    const double relSign = (relKey == Key::D || relKey == Key::W) ? 1.0 : -1.0;
+    if (residual * relSign < 0.0) std::swap(relKey, counterKey);
+    const int ki_c = ki(counterKey);
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
-    int64_t effectiveBrakeUs = CalculateTrueBrakeUs(relKey, ax, heldUs);
+    int64_t effectiveBrakeUs = CalculateTrueBrakeUs(relKey, ax);
     if (effectiveBrakeUs <= 0) {
         return false;
     }
@@ -361,9 +325,9 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, Inje
         s_state.expectedTimerId[ki_r] = overlapTimerId;
     }
 
+    // A manual key already held logically also transfers to timer ownership.
+    s_counterTargets[ki_c].Store(nullptr, batch.expectedTarget);
     if (!s_state.logical[ki_c]) {
-        if ((s_counterHeldMask.load(std::memory_order_acquire) & (1u << ki_c)) == 0)
-            s_counterTargets[ki_c].Store(nullptr, batch.expectedTarget);
         batch.push(counterKey, true);
         s_state.logical[ki_c] = true;
     }

@@ -65,12 +65,12 @@ void ResolveAxis(Axis ax, InjectionBatch& batch, bool onPhysicalPress = false);
 void CancelSocdTransition(Axis ax);
 void NeutralizeAxis(Axis ax, InjectionBatch& batch);
 void CancelStaleCounterStrafe(Key oppKey, InjectionBatch& batch);
-bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, int64_t heldUs, InjectionBatch& batch);
+bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, InjectionBatch& batch);
 
 void ReconcileInternal(bool suspending, InjectionBatch& batch);
 void ReconcileLogicalStateFromPhysical(InjectionBatch& batch);
 
-int64_t CalculateTrueBrakeUs(Key relKey, Axis ax, int64_t heldUs);
+int64_t CalculateTrueBrakeUs(Key relKey, Axis ax);
 
 
 } // namespace engine
