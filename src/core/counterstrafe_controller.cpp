@@ -284,7 +284,7 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, InjectionBatch& batc
     movement::AdvanceVelocity(s_state.vel, timing::NowUs(), rc);
     const double residual = ax == Axis::X ? s_state.vel.vx : s_state.vel.vy;
     const double relSign = (relKey == Key::D || relKey == Key::W) ? 1.0 : -1.0;
-    if (residual * relSign < 0.0) std::swap(relKey, counterKey);
+    if (residual * relSign < -0.1) std::swap(relKey, counterKey);
     const int ki_c = ki(counterKey);
     const auto& profile = rc.brakeProfiles[rc.activeBrakeProfileIndex];
     int64_t effectiveBrakeUs = CalculateTrueBrakeUs(relKey, ax);

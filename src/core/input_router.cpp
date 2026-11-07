@@ -53,14 +53,20 @@ void HandleKeyDown(Key k, bool routeSemantic,
 
         // A pending expectedTimerId means the macro itself is holding this key
         // as a counter-strafe brake. The human press must NOT cancel that
-        // timer, or the brake ends whenever the human releases (47/63 ms)
-        // instead of after the simulated number of ticks. On expiry the key
-        // is only released if it is not physically held.
+        // timer if the key is still actively serving as a brake against opposing
+        // velocity (see test AssertAutoBrake with physicalCounterTap).
+        // If movement is already in the key's direction (or stopped), the old
+        // brake is obsolete and must be cleared.
+        movement::AdvanceVelocity(s_state.vel, nowUs, rcfg::Get());
+        const double downResidual = (ax == Axis::X) ? s_state.vel.vx : s_state.vel.vy;
+        const double downSign = (k == Key::D || k == Key::W) ? 1.0 : -1.0;
         const bool macroBrakePending =
-            s_state.logical[ki_k] && s_state.expectedTimerId[ki_k] != 0;
+            s_state.logical[ki_k] && s_state.expectedTimerId[ki_k] != 0 &&
+            (downResidual * downSign < 0.0);
         if (!macroBrakePending) {
             timing::CancelTimer(k);
             s_state.expectedTimerId[ki(k)] = 0;
+            s_state.expectedTimerTarget[ki(k)] = {};
         }
 
         // --- SEMANTIC ROUTING LAYER ---
@@ -173,9 +179,21 @@ void HandleKeyUp(Key k, bool routeSemantic,
                 }
 
                 // Macro-held brake on this key (see HandleKeyDown): leave it
-                // held; its timer releases it after the full simulated hold.
+                // held only if it is still actively braking residual opposite momentum.
+                // If velocity has reversed or stopped, the prior brake is finished
+                // and releasing this key must trigger counter-strafing or normal release.
+                movement::AdvanceVelocity(s_state.vel, nowUs, rcfg::Get());
+                const double upResidual = (ax == Axis::X) ? s_state.vel.vx : s_state.vel.vy;
+                const double upSign = (k == Key::D || k == Key::W) ? 1.0 : -1.0;
                 const bool macroBrakePending = s_state.logical[ki_k] &&
-                    s_state.expectedTimerId[ki_k] != 0;
+                    s_state.expectedTimerId[ki_k] != 0 &&
+                    (upResidual * upSign < 0.0);
+
+                if (!macroBrakePending && s_state.expectedTimerId[ki_k] != 0) {
+                    timing::CancelTimer(k);
+                    s_state.expectedTimerId[ki_k] = 0;
+                    s_state.expectedTimerTarget[ki_k] = {};
+                }
 
                 bool strafed = macroBrakePending;
                 if (!macroBrakePending && !s_state.phys[ki_opp]) {

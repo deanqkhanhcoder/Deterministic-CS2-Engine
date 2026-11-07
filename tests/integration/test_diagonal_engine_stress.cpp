@@ -195,6 +195,58 @@ void AssertAutoBrake(SocdMode mode, bool physicalCounterTap = false) {
               << " burst=" << brakeUs << " us, stationary after friction\n";
 }
 
+void AssertAdadReversalBrake(SocdMode mode) {
+    RuntimeConfig config; config.socdMode = mode; rcfg::Apply(config);
+    {
+        std::lock_guard<std::mutex> lock(engine::s_stateMutex);
+        engine::s_state.Reset();
+    }
+    diagonal_test::ResetScheduleTrace();
+    // 1. Move left with A to full speed (250 u/s)
+    engine::HandleKeyDown(Key::A, true, g_routedTarget);
+    diagonal_test::AdvanceUs(500000);
+    engine::HandleKeyUp(Key::A, true, g_routedTarget);
+    assert(diagonal_test::ScheduleTraceCount() == 1);
+    assert(diagonal_test::ScheduledKey(0) == Key::D);
+    assert(engine::GetState().logical[ki(Key::D)]);
+    const auto dDeadline = diagonal_test::TimerDeadlineUs(Key::D);
+    const auto brakeUs = dDeadline - timing::NowUs();
+    assert(brakeUs >= 94000);
+
+    // 2. User presses D at +10ms and holds D through zero into positive speed
+    // Hold D for 90ms (total = 100ms, within the brake window if brakeUs >= 105ms, or just before dDeadline)
+    diagonal_test::AdvanceUs(10000);
+    engine::HandleKeyDown(Key::D, true, g_routedTarget);
+    const auto advanceHoldUs = (dDeadline - timing::NowUs()) - 1000; // 1ms before dDeadline
+    diagonal_test::AdvanceUs(advanceHoldUs);
+    assert(timing::NowUs() < dDeadline);
+
+    // If velocity has reversed to positive, releasing D must counter-strafe with Key::A
+    const auto curVx = engine::GetState().vel.vx;
+    if (curVx > 34.0) {
+        diagonal_test::ResetScheduleTrace();
+        engine::HandleKeyUp(Key::D, true, g_routedTarget);
+        assert(diagonal_test::ScheduleTraceCount() == 1);
+        assert(diagonal_test::ScheduledKey(0) == Key::A);
+        assert(engine::GetState().logical[ki(Key::A)]);
+        assert(engine::IsCounterStrafeHoldingKey(Key::A, g_routedTarget));
+
+        const auto aDeadline = diagonal_test::TimerDeadlineUs(Key::A);
+        diagonal_test::AdvanceUs(aDeadline - timing::NowUs());
+        diagonal_test::ExpireDueTimers();
+        assert(std::hypot(engine::GetState().vel.vx, engine::GetState().vel.vy) < 34);
+    } else {
+        engine::HandleKeyUp(Key::D, true, g_routedTarget);
+        diagonal_test::AdvanceUs(dDeadline - timing::NowUs());
+        diagonal_test::ExpireDueTimers();
+    }
+
+    diagonal_test::AdvanceUs(2000000);
+    engine::CommitLogicalStateFromInjection();
+    assert(engine::GetState().vel.vx == 0 && engine::GetState().vel.vy == 0);
+    AssertSettled();
+}
+
 void AssertManualCounterBrake(SocdMode mode, Key first, int64_t manualUs,
                              int shapingCase) {
     RuntimeConfig config;
@@ -467,6 +519,7 @@ int main() {
         for (auto first : {Key::A, Key::D, Key::W, Key::S}) AssertSustainedHold(mode, first);
         AssertAutoBrake(mode);
         AssertAutoBrake(mode, true);
+        AssertAdadReversalBrake(mode);
     }
     for (auto mode : {SocdMode::FULL, SocdMode::HUMANIZED})
         for (auto first : {Key::A, Key::D, Key::W, Key::S})

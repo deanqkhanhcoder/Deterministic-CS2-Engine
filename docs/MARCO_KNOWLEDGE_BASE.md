@@ -128,6 +128,11 @@ Status vocabulary for this pass:
 - **Target-Bound Injection**: Implemented `BhopInjectionQueue` and `bhop_injection_gate` to defer synthetic input to the hook-owner message thread with verified target identity.
 - **Automated Test Infrastructure**: Unified CTest suite under `make check` (18 unit/integration tests passing), PE import security audits, and isolated desktop guards.
 
+**V27.9 Counter-Strafe ADAD Interlock Fix**:
+- **BUG-012 ADAD Counter-Strafe Random Miss**:
+  - *Root Cause*: Trong `input_router.cpp`, `macroBrakePending` chỉ kiểm tra `logical[k] && expectedTimerId[k] != 0` mà không kiểm tra chiều vận tốc `residual` thực tế. Khi người chơi nhấp nhả ADAD nhanh (jiggle peek), nếu phím được bấm và nhả trong khi timer phanh của lần strafe trước đó vẫn còn hiệu lực (<94ms) nhưng nhân vật đã đảo chiều di chuyển, `macroBrakePending` nuốt mất sự kiện nhả, không gọi `AutoCounterStrafe`. Nếu giữ phím >94ms thì timer cũ đã hết hạn nên phanh bình thường -> tạo ra tỉ lệ "random" xịt counter-strafe theo nhịp bấm tay.
+  - *Fix*: Trong cả `HandleKeyDown` và `HandleKeyUp`, `macroBrakePending` chỉ được giữ khi phím đó thực sự vẫn đang đóng vai trò phanh hãm vận tốc ngược chiều (`residual * keySign < 0.0`). Nếu nhân vật đã dừng hoặc đảo chiều cùng hướng phím, timer cũ bị hủy ngay lập tức và `AutoCounterStrafe` được kích hoạt đầy đủ. Thêm test case `AssertAdadReversalBrake` kiểm thử tự động trong `test_diagonal_engine_stress.cpp`.
+
 ## 17. Technical Debt
 
 - Macro cờ build (`MARCO_ENABLE_LOGGING` v.v) chưa bị xoá ở `build_config.h` dù không có người dùng (Đã dọn dẹp ở V27.6).
