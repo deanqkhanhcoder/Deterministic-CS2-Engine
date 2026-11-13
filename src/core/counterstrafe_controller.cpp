@@ -169,7 +169,8 @@ void ResolveAxis(Axis ax, InjectionBatch& batch, bool onPhysicalPress) {
 void CancelStaleCounterStrafe(Key oppKey, InjectionBatch& batch) {
     int ki_o = ki(oppKey);
     timing::CancelTimer(oppKey);
-        s_state.expectedTimerId[ki(oppKey)] = 0;
+    s_state.expectedTimerId[ki(oppKey)] = 0;
+    s_state.expectedTimerTarget[ki(oppKey)] = {};
     if (s_state.logical[ki_o] && !s_state.phys[ki_o]) {
         batch.push(oppKey, false);
         s_state.logical[ki_o] = false;
@@ -186,6 +187,7 @@ void NeutralizeAxis(Axis ax, InjectionBatch& batch) {
         int ki_k = ki(k);
         timing::CancelTimer(k);
         s_state.expectedTimerId[ki(k)] = 0;
+        s_state.expectedTimerTarget[ki(k)] = {};
         if (s_state.logical[ki_k]) {
             batch.push(k, false);
             s_state.logical[ki_k] = false;
@@ -316,6 +318,7 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, InjectionBatch& batc
 
     if (effectiveOverlapUs <= 0) {
         s_state.expectedTimerId[ki_r] = 0;
+        s_state.expectedTimerTarget[ki_r] = {};
         if (s_state.logical[ki_r]) {
             batch.push(relKey, false);
             s_state.logical[ki_r] = false;

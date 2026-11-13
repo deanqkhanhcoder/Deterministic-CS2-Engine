@@ -253,20 +253,35 @@ TargetIdentity GetCurrentIdentity() {
 
 TargetIdentity SampleStableForegroundIdentity() {
     const HWND firstHwnd = GetForegroundWindow();
-    const TargetIdentity firstIdentity = TargetIdentity::FromWindow(firstHwnd);
+    if (!firstHwnd || !IsWindow(firstHwnd)) return {};
     const HWND secondHwnd = GetForegroundWindow();
-    const TargetIdentity secondIdentity = TargetIdentity::FromWindow(secondHwnd);
-    return detail::IsStableForegroundSample(firstHwnd, firstIdentity,
-                                            secondHwnd, secondIdentity)
-        ? secondIdentity
-        : TargetIdentity{};
+    if (firstHwnd != secondHwnd) return {};
+
+    const auto current = GetCurrentIdentity();
+    if (current.IsValid()) {
+        if (firstHwnd == current.hwnd) return current;
+        DWORD pid = 0;
+        GetWindowThreadProcessId(firstHwnd, &pid);
+        if (pid == current.pid) return current;
+    }
+    return TargetIdentity::FromWindow(secondHwnd);
 }
 
 bool IsExpectedTargetActive(const TargetIdentity& expected) noexcept {
     if (!expected.IsValid()) return false;
-    if (SampleStableForegroundIdentity() != expected) return false;
-    if (GetCurrentIdentity() != expected) return false;
-    return SampleStableForegroundIdentity() == expected;
+    const auto current = GetCurrentIdentity();
+    if (current != expected) return false;
+
+    const HWND fgHwnd = GetForegroundWindow();
+    if (fgHwnd == expected.hwnd) {
+        return true;
+    }
+    if (fgHwnd != nullptr) {
+        DWORD fgPid = 0;
+        GetWindowThreadProcessId(fgHwnd, &fgPid);
+        return fgPid == expected.pid;
+    }
+    return IsWindow(expected.hwnd) != FALSE;
 }
 
 DWORD GetCurrentTargetPid() {
