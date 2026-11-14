@@ -155,7 +155,7 @@ UINT ReleaseSlotLocked(std::size_t slot) {
 UINT ReleaseSlotForTargetLocked(
     std::size_t slot, const target_platform::TargetIdentity& target) {
     if (!g_held[slot] && !g_pendingRelease[slot]) return 0;
-    if (!target.IsValid() || g_ownerTarget[slot] != target) {
+    if (!target.IsValid() || !g_ownerTarget[slot].MatchesTarget(target)) {
         if (g_held[slot]) {
             g_pendingRelease[slot] = true;
             g_pendingTarget[slot] = g_ownerTarget[slot];
@@ -263,7 +263,7 @@ UINT KeyDownForTarget(
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_releaseOnly || !target_platform::IsExpectedTargetActive(target)) return 0;
     if (g_held[slot]) {
-        if (g_ownerTarget[slot] == target) return 1;
+        if (g_ownerTarget[slot].MatchesTarget(target)) return 1;
         g_pendingRelease[slot] = true;
         g_pendingTarget[slot] = g_ownerTarget[slot];
         RefreshReleaseOnlyLocked();
@@ -321,7 +321,7 @@ UINT SpaceDownForTarget(const target_platform::TargetIdentity& target) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_releaseOnly || !target_platform::IsExpectedTargetActive(target)) return 0;
     if (g_held[kSpaceSlot]) {
-        if (g_ownerTarget[kSpaceSlot] == target) return 1;
+        if (g_ownerTarget[kSpaceSlot].MatchesTarget(target)) return 1;
         g_pendingRelease[kSpaceSlot] = true;
         g_pendingTarget[kSpaceSlot] = g_ownerTarget[kSpaceSlot];
         RefreshReleaseOnlyLocked();
@@ -381,7 +381,7 @@ UINT ReconcilePendingReleasesForTarget(
     if (!target_platform::IsExpectedTargetActive(target)) return 0;
     UINT released = 0;
     for (std::size_t slot = 0; slot < kReleaseSlotCount; ++slot) {
-        if (!g_pendingRelease[slot] || g_pendingTarget[slot] != target) continue;
+        if (!g_pendingRelease[slot] || !g_pendingTarget[slot].MatchesTarget(target)) continue;
         released += ReleaseSlotLocked(slot);
     }
     RefreshReleaseOnlyLocked();
@@ -437,7 +437,7 @@ UINT ShutdownAndReleaseForTarget(
     if (!target_platform::IsExpectedTargetActive(target)) return 0;
     UINT released = 0;
     for (std::size_t slot = 0; slot < kReleaseSlotCount; ++slot) {
-        if (g_pendingRelease[slot] && g_pendingTarget[slot] == target) {
+        if (g_pendingRelease[slot] && g_pendingTarget[slot].MatchesTarget(target)) {
             released += ReleaseSlotLocked(slot);
         }
     }

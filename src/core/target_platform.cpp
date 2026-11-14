@@ -270,10 +270,10 @@ TargetIdentity SampleStableForegroundIdentity() {
 bool IsExpectedTargetActive(const TargetIdentity& expected) noexcept {
     if (!expected.IsValid()) return false;
     const auto current = GetCurrentIdentity();
-    if (current != expected) return false;
+    if (!current.IsValid() || !expected.MatchesTarget(current)) return false;
 
     const HWND fgHwnd = GetForegroundWindow();
-    if (fgHwnd == expected.hwnd) {
+    if (fgHwnd == expected.hwnd || fgHwnd == current.hwnd) {
         return true;
     }
     if (fgHwnd != nullptr) {
@@ -281,7 +281,7 @@ bool IsExpectedTargetActive(const TargetIdentity& expected) noexcept {
         GetWindowThreadProcessId(fgHwnd, &fgPid);
         return fgPid == expected.pid;
     }
-    return IsWindow(expected.hwnd) != FALSE;
+    return IsWindow(expected.hwnd) != FALSE || IsWindow(current.hwnd) != FALSE;
 }
 
 DWORD GetCurrentTargetPid() {

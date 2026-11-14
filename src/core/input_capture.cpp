@@ -177,12 +177,13 @@ bool IsTargetActiveForUI() {
     const auto foreground = SampleForegroundIdentity();
     if (!foreground.IsValid()) return false;
     auto resolvedId = target_platform::GetCurrentIdentity();
-    return foreground == resolvedId && resolvedId.IsValid();
+    return resolvedId.IsValid() && foreground.MatchesTarget(resolvedId);
 }
 
 static bool IsTargetActiveFast(const target_platform::TargetIdentity& expected) {
     const auto published = target_platform::GetCurrentIdentity();
-    const bool active = expected.IsValid() && expected == published;
+    const bool active = expected.IsValid() && published.IsValid() &&
+                        expected.MatchesTarget(published);
     if (active != s_wasTargetActive.load(std::memory_order_acquire) && s_hwnd) {
         PostMessageW(s_hwnd, WM_TARGET_REFRESH_REQUEST, 0, 0);
     }
@@ -196,7 +197,7 @@ static bool ReconcileTargetFocusNow() {
     const auto foreground = SampleForegroundIdentity();
     HWND fg = foreground.hwnd;
     auto pub = target_platform::GetCurrentIdentity();
-    bool isActive = foreground.IsValid() && foreground == pub && pub.IsValid();
+    bool isActive = foreground.IsValid() && pub.IsValid() && foreground.MatchesTarget(pub);
 
     // Focus reconciliation is serialized onto the message thread. Hook
     // callbacks only enqueue resolver work and never mutate engine state.
@@ -439,8 +440,10 @@ static LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     }
 
     // --- 3. SEMANTIC ROUTING LAYER ---
-    const auto dispatchTarget = SampleForegroundIdentity();
-    const bool isActive = IsTargetActiveFast(dispatchTarget);
+    const auto published = target_platform::GetCurrentIdentity();
+    const auto foregroundTarget = SampleForegroundIdentity();
+    const bool isActive = IsTargetActiveFast(foregroundTarget);
+    const auto dispatchTarget = isActive ? published : foregroundTarget;
     bool isSuspended = engine::IsSuspended();
     bool shouldRoute = isActive && !isSuspended;
     uint32_t caps = target_platform::GetActiveCapabilities();

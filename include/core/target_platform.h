@@ -44,6 +44,14 @@ struct TargetIdentity {
     bool IsValid() const {
         return hwnd != nullptr && pid != 0 && tid != 0 && processStartTime != 0;
     }
+    bool MatchesProcess(const TargetIdentity& other) const noexcept {
+        return pid != 0 && pid == other.pid &&
+               processStartTime != 0 && processStartTime == other.processStartTime;
+    }
+    bool MatchesTarget(const TargetIdentity& other) const noexcept {
+        if (!IsValid() || !other.IsValid()) return false;
+        return MatchesProcess(other);
+    }
     bool operator==(const TargetIdentity& other) const {
         return hwnd == other.hwnd && pid == other.pid && tid == other.tid &&
                identity == other.identity &&
@@ -83,7 +91,7 @@ struct TargetPublication {
 
 inline bool IsForegroundTarget(const TargetIdentity& foreground,
                                const TargetIdentity& expected) noexcept {
-    return foreground.IsValid() && expected.IsValid() && foreground == expected;
+    return foreground.IsValid() && expected.IsValid() && foreground.MatchesTarget(expected);
 }
 
 namespace detail {
@@ -137,7 +145,8 @@ private:
 
 inline bool ShouldPublishResolution(const TargetIdentity& requested,
                                     const TargetIdentity& foreground) noexcept {
-    return requested.IsValid() ? requested == foreground : !foreground.IsValid();
+    if (!requested.IsValid()) return !foreground.IsValid();
+    return requested.MatchesTarget(foreground);
 }
 
 inline bool IsStableForegroundSample(HWND firstHwnd,

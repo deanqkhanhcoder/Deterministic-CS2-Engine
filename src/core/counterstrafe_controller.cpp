@@ -18,7 +18,7 @@ static std::atomic<std::uint32_t> s_counterHeldMask{0};
 static target_platform::detail::TargetPublicationStore s_counterTargets[4];
 bool IsCounterStrafeHoldingKey(Key key, const target_platform::TargetIdentity& target) {
     return ki(key) < 4 && (s_counterHeldMask.load(std::memory_order_acquire) & (1u << ki(key))) != 0 &&
-        s_counterTargets[ki(key)].Load().target == target;
+        s_counterTargets[ki(key)].Load().target.MatchesTarget(target);
 }
 
 void CommitLogicalStateFromInjection() {
