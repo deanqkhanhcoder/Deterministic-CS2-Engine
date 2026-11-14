@@ -21,6 +21,15 @@ Kiến trúc cực kỳ khắt khe với đa luồng để tránh block OS hook:
 Sử dụng `WH_KEYBOARD_LL` và `WH_MOUSE_LL`. Đầu vào luôn cập nhật trạng thái *Vật Lý* (Physical Truth) bất kể focus. Phân luồng *Semantic* (Logic) chỉ kích hoạt khi Target đang Active. Khái niệm "Swallow" (Nuốt) ngăn game nhận phím thật nếu macro cần xử lý thay (như Space cho BHOP).
 
 ## 5. Counter-Strafe Design
+
+Auto Counter-Strafe hiện được kích hoạt khi nhả phím di chuyển, không phải khi
+nhấn Mouse1. Với SOCD OFF, giữ A/D và click sẽ tiếp tục di chuyển; muốn phanh
+trước viên đạn cần một thiết kế xử lý Mouse1 riêng. FPS drop và độ trễ thực tế
+của game chưa được xác nhận qua test giả lập.
+
+Khi đổi Shift hoặc crouch trong lúc di chuyển, bộ theo dõi vận tốc phải đóng
+khoảng thời gian với tốc độ cũ trước khi cập nhật hệ số tốc độ mới. Regression
+`AssertModifierUpdatesVelocity` kiểm tra chuyển trạng thái này ở cả ba SOCD mode.
 Khi phát hiện nhả phím di chuyển, tính toán True Velocity thông qua bảng LUT (Look-up Table) 2D. Bơm ngay lập tức phím ngược lại (Counter key) và đặt một Timer lên `TimerThread` để nhả phím counter, giúp dừng nhân vật nhanh nhất.
 
 ## 6. BHOP Design
@@ -39,7 +48,7 @@ Hệ thống sử dụng Ring Buffer lock-free. Sự kiện vòng đời (Focus,
 - `docs/archive/`: Thư mục lưu mọi lịch sử điều tra của V27.4 trở về trước.
 
 ## 10. Release Process
-Cấm claim `PASS`, `STABLE` nếu không có bằng chứng từ real gameplay. Bản release phải trải qua 3-7 ngày Matchmaking (MM/DM) test. Observability sẽ được hạ xuống mức Production (chỉ lấy ERROR/WARN/CRASH) trong chế độ Release.
+Cấm claim `PASS`, `STABLE` nếu không có bằng chứng từ real gameplay. Bản release phải trải qua 3-7 ngày Matchmaking (MM/DM) test. Release không ghi log hoặc crash log; dùng bản Debug để chẩn đoán.
 
 ## 11. V27.4 Focus Desync Incident
 **Triệu chứng**: Counter-strafe ngẫu nhiên chết cứng, đổi profile hoặc alt-tab lại thì hồi phục.
@@ -112,7 +121,7 @@ Status vocabulary for this pass:
 **V27.6 Maturity Update**:
 - Removed Watchdog Architecture (fixes BUG-008, BUG-010). UI Watchdog also removed.
 - Cleaned up `autofire_controller` (dead code), F8 tracking, and `WM_TIMER_EXPIRED` (including stale header documentation).
-- Decoupled `ForensicRingBuffer` from `MARCO_ENABLE_FORENSIC` for production observability, preserving WARN/ERROR/FATAL logging in Release builds.
+- Historical V27.8: `ForensicRingBuffer` and WARN/ERROR/FATAL logging were available in Release. The current build restricts these diagnostics to Debug.
 - RC Cleanup: Removed ghost diagnostic macros (`MARCO_ENABLE_DIAGNOSTICS`), dead UI files, and stale configuration fields (`watchdogIntervalMs`).
 
 **V27.7 Focus-Storm Hardening**:
@@ -159,3 +168,10 @@ Status vocabulary for this pass:
 2. Mở file `marco_YYYY-MM-DD.log`. Tìm kiếm các trap: `FOCUS_LOST`, `BHOP_STALL`, `COUNTERSTRAFE_CONFLICT`, `LOGICAL_PHYSICAL_DIVERGENCE`.
 3. Kiểm tra xem người dùng có đổi config profile trước lúc bị không (`PROFILE_CHANGED`).
 4. Theo dõi dấu vết `KeyboardProc` trong `runtime/logs/marco_debug.log`. Nếu có event ` route=0`, là do Focus Desync. Nếu không có Timer Event, là do Timer Thread treo.
+
+## Counter-strafe: thời gian phát phanh khi dispatch bị chậm
+
+- Timer phanh từng bắt đầu trước khi phát input. Test giả lập backend chậm 150 ms tái hiện deadline nhả đã quá hạn khi phím phanh vừa được gửi; chưa có bằng chứng xác nhận đây là nguyên nhân duy nhất trong CS2.
+- Giữ timer dự phòng trước dispatch, sau dispatch đặt lại timer với ID mới và đủ thời gian phanh. Callback ID cũ bị bỏ qua; nếu đặt lại thất bại, nhả input đã sở hữu. Test bao phủ dispatch chậm, callback cũ và lỗi đặt timer.
+- Chỉ `marco_debug.exe` ghi log và crash log. Log WARN `Routed event delayed`, `Brake dispatch delayed`, `Timer callback delayed` xuất hiện khi từng giai đoạn trễ quá 10 ms; `Brake key down not accepted` báo không có ownership sau dispatch. Timer callback có thể là callback cũ bị bỏ qua. Log ghi lại thời gian xử lý trong Marco, không xác nhận CS2 đã nhận hoặc mô phỏng input. `marco.exe` không ghi log, không khởi tạo logger/forensic và giữ telemetry cần cho dashboard.
+- Log trước thay đổi có một message-pump stall 449989 µs và một số routed key-up xử lý 5078–7458 µs; chưa có timestamp/sự kiện game để kết luận chúng trùng lúc xảy ra lỗi. Kiểm tra lại bằng phiên chơi thực và lưu log trước khi chạy lại vì logger mở file ở chế độ ghi mới.

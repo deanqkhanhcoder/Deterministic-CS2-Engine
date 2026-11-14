@@ -71,6 +71,9 @@ struct RoutedKeyEvent {
     target_platform::TargetIdentity dispatchTarget;
     bool bhopSemantic = false;
     bool down = false;
+#if MARCO_ENABLE_FORENSIC
+    int64_t queuedUs = 0;
+#endif
 };
 constexpr std::size_t kRoutedEventCapacity = 1024;
 constexpr std::size_t kMaxRoutedEventsPerPass = 32;
@@ -87,7 +90,14 @@ static bool PostRoutedWake() {
 }
 
 static bool QueueRoutedEvent(const RoutedKeyEvent& event) {
-    if (!s_routedEvents.TryPush(event)) {
+#if MARCO_ENABLE_FORENSIC
+    RoutedKeyEvent queued = event;
+    queued.queuedUs = timing::NowUs();
+    const bool pushed = s_routedEvents.TryPush(queued);
+#else
+    const bool pushed = s_routedEvents.TryPush(event);
+#endif
+    if (!pushed) {
         if (s_hwnd) PostMessageW(s_hwnd, WM_EMERGENCY_UNHOOK, 0, 0);
         return false;
     }
@@ -109,7 +119,16 @@ void DrainRoutedInputEvents() {
     s_routedEvents.DrainBounded(
         kMaxRoutedEventsPerPass, kRoutedDispatchBudgetUs,
         [](const RoutedKeyEvent& event) {
+#if MARCO_ENABLE_FORENSIC
             const int64_t eventStartUs = timing::NowUs();
+            const int64_t queueDelayUs = eventStartUs - event.queuedUs;
+            if (queueDelayUs > 10000) {
+                DLOG_WARN(Runtime,
+                          "Routed event delayed: kind=%u key=%s queue=%lld us",
+                          static_cast<unsigned>(event.kind), keymap::KeyName[ki(event.key)],
+                          static_cast<long long>(queueDelayUs));
+            }
+#endif
             const bool routeSemantic =
                 event.routeSemantic &&
                 target_platform::IsExpectedTargetActive(event.dispatchTarget);
@@ -132,6 +151,7 @@ void DrainRoutedInputEvents() {
                 engine::OnSpaceUp();
                 bhop::OnSpaceUp();
             }
+#if MARCO_ENABLE_FORENSIC
             const int64_t eventUs = timing::NowUs() - eventStartUs;
             if (eventUs > 5000) {
                 DLOG_WARN(Runtime,
@@ -141,6 +161,7 @@ void DrainRoutedInputEvents() {
                           routeSemantic ? 1U : 0U,
                           static_cast<long long>(eventUs));
             }
+#endif
         },
         [] { return timing::NowUs(); });
 
@@ -217,14 +238,20 @@ static bool ReconcileTargetFocusNow() {
 
     s_lastEvaluatedFg.store(fg, std::memory_order_relaxed);
 
+#if MARCO_ENABLE_FORENSIC
     bool didLoseFocus = false;
     bool didRegainFocus = false;
+#endif
 
     // --- Unified Focus Reconciliation ---
     if (wasActive && !isActive) {
+#if MARCO_ENABLE_FORENSIC
         const int64_t reconcileStartUs = timing::NowUs();
+#endif
         s_wasTargetActive.store(false, std::memory_order_release);
+#if MARCO_ENABLE_FORENSIC
         didLoseFocus = true;
+#endif
         engine::ClearHeldKeys(pub);
         bhop::OnSpaceUp();
         s_spaceSwallowed = false; // Explicit swallow release
@@ -236,15 +263,21 @@ static bool ReconcileTargetFocusNow() {
         s_cPhysDown = false;
         s_lshiftPhysDown = false;
         s_hkDownF1 = s_hkDownF2 = s_hkDownF3 = s_hkDownF6 = false; // Clear global hotkey states on focus loss
+#if MARCO_ENABLE_FORENSIC
         const int64_t reconcileUs = timing::NowUs() - reconcileStartUs;
         if (reconcileUs > 5000) {
             DLOG_WARN(Runtime, "Focus-loss reconciliation stalled for %lld us",
                       reconcileUs);
         }
+#endif
     } else if (!wasActive && isActive) {
+#if MARCO_ENABLE_FORENSIC
         const int64_t reconcileStartUs = timing::NowUs();
+#endif
         s_wasTargetActive.store(true, std::memory_order_release);
+#if MARCO_ENABLE_FORENSIC
         didRegainFocus = true;
+#endif
         
         // Sync local space state with actual hardware truth
         s_physSpaceDown = (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0;
@@ -272,15 +305,18 @@ static bool ReconcileTargetFocusNow() {
         } else {
             s_spaceSwallowed = false;
         }
+#if MARCO_ENABLE_FORENSIC
         const int64_t reconcileUs = timing::NowUs() - reconcileStartUs;
         if (reconcileUs > 5000) {
             DLOG_WARN(Runtime, "Focus-regain reconciliation stalled for %lld us",
                       reconcileUs);
         }
+#endif
     }
 
     lock.unlock();
 
+#if MARCO_ENABLE_FORENSIC
     if (didLoseFocus) {
         DLOG_WARN(Hook, "Target focus LOST [HWND:%p PID:%lu]", static_cast<void*>(pub.hwnd), pub.pid);
         telemetry::ForensicEvent ev = { telemetry::ForensicTrapType::FOCUS_LOST, GetCurrentThreadId(), timing::NowUs(), 0, 0, 0, false };
@@ -292,6 +328,7 @@ static bool ReconcileTargetFocusNow() {
         telemetry::g_forensicBuffer.Push(ev);
         telemetry::RequestForensicFlush();
     }
+#endif
 
     return isActive;
 }

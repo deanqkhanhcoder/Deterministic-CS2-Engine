@@ -25,10 +25,16 @@ struct alignas(64) InjectionBatch {
     struct Event { Key k; bool down; };
     Event events[16];
     int count = 0;
+    struct BrakeTimer { Key key; uint64_t id; int64_t durationUs; };
+    BrakeTimer brakeTimers[2]{};
+    int brakeTimerCount = 0;
     target_platform::TargetIdentity expectedTarget;
     explicit InjectionBatch(target_platform::TargetIdentity target = {})
         : expectedTarget(target) {}
     void push(Key k, bool down) { if (count < 16) events[count++] = {k, down}; }
+    void restartBrakeTimerAfterDispatch(Key key, uint64_t id, int64_t durationUs) {
+        if (brakeTimerCount < 2) brakeTimers[brakeTimerCount++] = {key, id, durationUs};
+    }
     static bool ValidateExpectedTarget(const void* context) noexcept {
         return context != nullptr && target_platform::IsExpectedTargetActive(
             *static_cast<const target_platform::TargetIdentity*>(context));

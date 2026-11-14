@@ -167,6 +167,7 @@ with tempfile.TemporaryDirectory(prefix="marco-ipc-test-") as directory:
             assert USER32.PostMessageW(window, 0x111, 40003, 0)  # ID_TRAY_EXIT
             process.wait(timeout=10)
         assert not (sandbox / "marco.token").exists(), "Session token leaked after tray exit"
+        assert not list(sandbox.rglob("*.log")), "Release created a log file"
         process = launch(exe)
         persisted = request("/api/config")
         assert persisted["brakeProfiles"] == cfg["brakeProfiles"], "INI roundtrip failed"

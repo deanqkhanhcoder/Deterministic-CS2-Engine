@@ -44,9 +44,9 @@ Stable Production Baseline
 
 **V27.6 Maturity & Observability Slimdown (COMPLETED)**:
 1. Purged Watchdog Architecture (heartbeats, fail-safe triggers, UI watchdog).
-2. Decoupled ForensicRingBuffer from MARCO_ENABLE_FORENSIC, keeping FOCUS/PROFILE events in production.
+2. Originally retained FOCUS/PROFILE forensic events in production; current builds restrict them to Debug.
 3. Cleaned up obsolete files and dead code (e.g., `autofire_controller.cpp`, F8 tracking, `WM_TIMER_EXPIRED`).
-4. Retained WARN, ERROR, FATAL logging in Release builds.
+4. Originally retained WARN, ERROR, FATAL logging in Release; current builds disable all diagnostic and crash logs in Release.
 5. RC Cleanup: Removed all ghost macros, dead diagnostic UI files, and stale configuration fields.
 6. Telemetry Repair: Fixed missing thread health metrics in Release builds by decoupling them from forensic tracing.
 

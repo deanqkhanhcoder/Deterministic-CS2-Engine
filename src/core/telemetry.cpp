@@ -25,9 +25,8 @@ TRACELOGGING_DEFINE_PROVIDER(
 #include "build_config.h"
 
 namespace telemetry {
-ForensicRingBuffer g_forensicBuffer;
-
 #if MARCO_ENABLE_FORENSIC
+ForensicRingBuffer g_forensicBuffer;
 EventRingBuffer g_eventBuffer;
 
 std::atomic<uint64_t> g_timersCreated{0};
@@ -39,6 +38,7 @@ std::atomic<uint64_t> g_timersCancelled{0};
 #include <time.h>
 #include <string>
 
+#if MARCO_ENABLE_FORENSIC
 static const char* ForensicTrapName(ForensicTrapType type) {
     switch (type) {
         case ForensicTrapType::FOCUS_LOST: return "FOCUS_LOST";
@@ -243,6 +243,7 @@ const std::string& GetForensicLogPath() {
     }
     return s_forensicLogPath;
 }
+#endif
 
 #if MARCO_ENABLE_FORENSIC
 static std::thread s_telemetryThread;

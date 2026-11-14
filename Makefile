@@ -12,7 +12,7 @@ BASE_LDLIBS   = -luser32 -lwinmm -lws2_32 -lavrt -lshell32
 # Keep this manifest in lockstep with CMakeLists.txt.
 COMMON_CORE_SRCS = \
 	src/core/bhop.cpp src/core/config_io.cpp \
-	src/core/counterstrafe_controller.cpp src/core/debug_logger.cpp \
+	src/core/counterstrafe_controller.cpp \
 	src/core/injection.cpp src/core/syscall_dispatch.cpp src/core/input_capture.cpp \
 	src/core/input_router.cpp src/core/ipc_server.cpp src/core/main.cpp \
 	src/core/movement_reconstruction.cpp src/core/runtime_config.cpp \
@@ -21,7 +21,7 @@ COMMON_CORE_SRCS = \
 	src/core/timer_lifecycle.cpp src/core/timing.cpp \
 	src/core/topology.cpp src/core/workspace.cpp src/core/system_tray.cpp
 DIAGNOSTIC_CORE_SRCS = \
-	src/core/analysis_toolkit.cpp src/core/etw_controller.cpp
+	src/core/analysis_toolkit.cpp src/core/debug_logger.cpp src/core/etw_controller.cpp
 
 # Default target
 all: release

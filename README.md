@@ -50,6 +50,7 @@ UI verification: `cd ui`, then `npm test` and `npm run build` (includes TypeScri
 - **Safe Mode with Snapshot Reversion**: Entering Safe Mode applies temporary clamp overlays without destroying user settings. Exiting or triggering Revert to Snapshot instantly restores the pre-safemode configuration.
 - **Microsecond Precision Hybrid Timing**: Utilizes `timeBeginPeriod(1)` and high-resolution hardware counters (`QPC`/`QPF`) paired with spin-wait loops (`_mm_pause`) for microsecond key release accuracy.
 - **Two Lean Build Targets**: Directly outputs `./marco.exe` (Release) and `./marco_debug.exe` (Debug) at the workspace root.
+- **Debug-only logs**: `marco_debug.exe` writes diagnostics and crash logs. `marco.exe` disables logging and debug tracing, including crash logs, while retaining dashboard telemetry.
 
 ---
 

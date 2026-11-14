@@ -61,7 +61,49 @@ void TrackNativeMovement(const target_platform::TargetIdentity& target) {
 }
 
 void FlushAndCommitLogicalState(InjectionBatch& batch) {
+#if MARCO_ENABLE_FORENSIC
+    const int64_t dispatchStartUs = timing::NowUs();
+#endif
     batch.flush();
+#if MARCO_ENABLE_FORENSIC
+    const int64_t dispatchUs = timing::NowUs() - dispatchStartUs;
+    if (batch.brakeTimerCount != 0 && dispatchUs > 10000) {
+        DLOG_WARN(Timing, "Brake dispatch delayed: total=%lld us",
+                  static_cast<long long>(dispatchUs));
+    }
+#endif
+    // The initial timers reserve a release before sending a key down. Restart
+    // them only after dispatch, so a stalled SendInput cannot consume the
+    // intended hold time. Queued callbacks for the old IDs become stale.
+    for (int i = 0; i < batch.brakeTimerCount; ++i) {
+        const auto timer = batch.brakeTimers[i];
+#if MARCO_ENABLE_FORENSIC
+        for (int j = 0; j < batch.count; ++j) {
+            if (batch.events[j].k == timer.key && batch.events[j].down &&
+                (injection::HeldMovementMask() & (1u << ki(timer.key))) == 0) {
+                DLOG_WARN(Injection, "Brake key down not accepted: key=%s", keymap::KeyName[ki(timer.key)]);
+            }
+        }
+#endif
+        const uint64_t newId = timing::ScheduleTimerUs(timer.key, timer.durationUs);
+        bool release = false;
+        {
+            std::lock_guard<std::mutex> lock(s_stateMutex);
+            const int index = ki(timer.key);
+            if (s_state.expectedTimerId[index] == timer.id) {
+                s_state.expectedTimerId[index] = newId;
+                if (newId == 0) {
+                    s_state.expectedTimerTarget[index] = {};
+                    release = !s_state.phys[index];
+                }
+            }
+        }
+        if (newId == 0) {
+            DLOG_WARN(Timing, "Brake timer restart failed: key=%s", keymap::KeyName[ki(timer.key)]);
+            timing::CancelTimer(timer.key);
+            if (release) (void)injection::KeyUpForTarget(timer.key, batch.expectedTarget);
+        }
+    }
     CommitLogicalStateFromInjection();
 }
 
@@ -337,6 +379,9 @@ bool AutoCounterStrafe(Key relKey, Key counterKey, Axis ax, InjectionBatch& batc
 
     s_state.expectedTimerTarget[ki_c] = batch.expectedTarget;
     s_state.expectedTimerId[ki_c] = counterTimerId;
+    if (overlapTimerId != 0)
+        batch.restartBrakeTimerAfterDispatch(relKey, overlapTimerId, effectiveOverlapUs);
+    batch.restartBrakeTimerAfterDispatch(counterKey, counterTimerId, effectiveBrakeUs);
     
     s_state.mem.conflictPenalty[ai(ax)] = std::max(0.0, s_state.mem.conflictPenalty[ai(ax)] - rc.conflictDecrement);
     return true;

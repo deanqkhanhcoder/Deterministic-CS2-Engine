@@ -40,7 +40,9 @@
 // â”€â”€ Crash Resilience & Startup Forensics â”€â”€
 using NtSetTimerResolutionFn = LONG (WINAPI *)(ULONG, BOOLEAN, PULONG);
 
+#if MARCO_ENABLE_FORENSIC
 static std::atomic<const char*> g_startupPhase{"INIT"};
+#endif
 static std::atomic<bool> g_timerPeriodActive{false};
 static std::atomic<bool> g_ntTimerResolutionActive{false};
 static NtSetTimerResolutionFn g_ntSetTimerResolution = nullptr;
@@ -56,6 +58,7 @@ static void RestoreTimerResolution() {
     }
 }
 
+#if MARCO_ENABLE_FORENSIC
 #define SAFE_STARTUP_TRACE(phase) do { g_startupPhase.store(phase, std::memory_order_release); DLOG_INFO(Startup, "Startup Phase: %s", phase); } while(0)
 
 static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
@@ -98,6 +101,9 @@ static LONG WINAPI CrashVectoredExceptionHandler(EXCEPTION_POINTERS* ep) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+#else
+#define SAFE_STARTUP_TRACE(phase) do {} while(0)
+#endif
 
 
 
@@ -213,7 +219,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     (void)commandLine;
 #endif
     // â”€â”€ Crash handler â”€â”€
+#if MARCO_ENABLE_FORENSIC
     PVOID crashHandler = AddVectoredExceptionHandler(1, CrashVectoredExceptionHandler);
+#else
+    PVOID crashHandler = nullptr;
+#endif
     SAFE_STARTUP_TRACE("MUTEX_CHECK");
 
     // â”€â”€ Prevent multiple instances â”€â”€
@@ -253,7 +263,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
 
     SAFE_STARTUP_TRACE("SUBSYSTEM_INIT");
     // â”€â”€ Initialize subsystems â”€â”€
+#if MARCO_ENABLE_FORENSIC
     dlog::Init();
+#endif
     InitializeInjectionDispatch();
     timing::Init();
     rcfg::Init();
@@ -261,6 +273,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     telemetry::Init();
     telemetry::StartTelemetryThread();
 
+#if MARCO_ENABLE_FORENSIC
     workspace::EnsureRuntimeDirectoriesExist();
     std::string logDir = workspace::GetLogRootA();
     std::time_t t = std::time(nullptr);
@@ -268,10 +281,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     char timeBuf[64];
     std::strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d_%H-%M-%S", &tm);
     std::string forensicLogPath = logDir + "marco_" + timeBuf + ".log";
-#if MARCO_ENABLE_FORENSIC
     telemetry::InitForensics(forensicLogPath);
-#endif
     DLOG_INFO(Startup, "Forensic log path: %s", forensicLogPath.c_str());
+#endif
     analysis::Init();
     topology::Init();
     topology::PinHookThread(L"Games");
@@ -312,7 +324,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
 #endif
         telemetry::Shutdown();
         target_platform::Shutdown();
+#if MARCO_ENABLE_FORENSIC
         dlog::Shutdown();
+#endif
         RestoreTimerResolution();
         ReleaseMutex(mutex);
         CloseHandle(mutex);
@@ -350,7 +364,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
         telemetry::Shutdown();
         target_platform::Shutdown();
 
+#if MARCO_ENABLE_FORENSIC
         dlog::Shutdown();
+#endif
         RestoreTimerResolution();
         DestroyWindow(msgHwnd);
         ReleaseMutex(mutex);
@@ -492,11 +508,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR commandLine, int) {
     RuntimeConfig finalCfg = rcfg::GetUserConfig();
     config_io::Save(finalCfg);
 
+#if MARCO_ENABLE_FORENSIC
     if (!dlog::Flush()) {
         DLOG_ERR(Shutdown, "Logger flush timed out with %lld pending entries",
                  static_cast<int64_t>(dlog::PendingCount()));
     }
     dlog::Shutdown();
+#endif
     RestoreTimerResolution();
     if (IsWindow(msgHwnd)) DestroyWindow(msgHwnd);
     UnregisterClassW(L"CS2MsgClass", hInst);

@@ -37,11 +37,16 @@ target_platform::TargetIdentity g_foreignTarget;
 std::atomic<bool> g_flipAfterSend{false};
 std::atomic<int> g_foreignDispatches{0};
 std::atomic<uint64_t> g_sendCalls{0};
+int64_t g_dispatchDelayUs = 0;
 struct InputEdge { Key key; bool down; int64_t timeUs; };
 std::vector<InputEdge>* g_edgeTrace = nullptr;
 
 UINT CaptureInputs(UINT count, INPUT* inputs, int inputSize) {
     assert(inputSize == static_cast<int>(sizeof(INPUT)));
+    if (g_dispatchDelayUs > 0) {
+        diagonal_test::AdvanceUs(g_dispatchDelayUs);
+        g_dispatchDelayUs = 0;
+    }
     if (diagonal_test::GetLiveTarget() != g_routedTarget) {
         g_foreignDispatches.fetch_add(1, std::memory_order_relaxed);
     }
@@ -165,7 +170,7 @@ void AssertAutoBrake(SocdMode mode, bool physicalCounterTap = false) {
     const auto brakeUs = deadline - releaseUs;
     assert(brakeUs >= 94000 && brakeUs <= 110000);
     assert(engine::g_lastBrakeUs.load() == brakeUs);
-    assert(diagonal_test::ScheduleTraceCount() == 1);
+    assert(diagonal_test::ScheduleTraceCount() == 2);
     assert(diagonal_test::ScheduledKey(0) == Key::D);
     assert(engine::GetState().logical[ki(Key::D)]);
     assert(engine::IsCounterStrafeHoldingKey(Key::D, g_routedTarget));
@@ -195,6 +200,29 @@ void AssertAutoBrake(SocdMode mode, bool physicalCounterTap = false) {
               << " burst=" << brakeUs << " us, stationary after friction\n";
 }
 
+void AssertModifierUpdatesVelocity(SocdMode mode, bool crouch) {
+    RuntimeConfig config; config.socdMode = mode; rcfg::Apply(config);
+    { std::lock_guard<std::mutex> lock(engine::s_stateMutex); engine::s_state.Reset(); }
+    engine::HandleKeyDown(Key::D, true, g_routedTarget);
+    diagonal_test::AdvanceUs(500000);
+    if (crouch) engine::OnSysKeyChange(true, true, true);
+    else engine::OnShiftChange(true, true);
+    const auto changed = engine::GetState().vel;
+    assert(changed.vx > 240.0);
+    assert(std::abs(changed.speedScale - (crouch ? 0.34 : 0.52)) < 1e-9);
+    diagonal_test::AdvanceUs(500000);
+    auto expected = changed;
+    movement::AdvanceVelocity(expected, timing::NowUs(), config);
+    engine::HandleKeyUp(Key::D, true, g_routedTarget);
+    const auto actual = engine::GetState().vel;
+    assert(std::abs(actual.vx - expected.vx) < 1e-6);
+    if (crouch) engine::OnSysKeyChange(true, false, true);
+    else engine::OnShiftChange(false, true);
+    diagonal_test::AdvanceUs(350000);
+    diagonal_test::ExpireDueTimers();
+    AssertSettled();
+}
+
 void AssertAdadReversalBrake(SocdMode mode) {
     RuntimeConfig config; config.socdMode = mode; rcfg::Apply(config);
     {
@@ -206,7 +234,7 @@ void AssertAdadReversalBrake(SocdMode mode) {
     engine::HandleKeyDown(Key::A, true, g_routedTarget);
     diagonal_test::AdvanceUs(500000);
     engine::HandleKeyUp(Key::A, true, g_routedTarget);
-    assert(diagonal_test::ScheduleTraceCount() == 1);
+    assert(diagonal_test::ScheduleTraceCount() == 2);
     assert(diagonal_test::ScheduledKey(0) == Key::D);
     assert(engine::GetState().logical[ki(Key::D)]);
     const auto dDeadline = diagonal_test::TimerDeadlineUs(Key::D);
@@ -226,7 +254,7 @@ void AssertAdadReversalBrake(SocdMode mode) {
     if (curVx > 34.0) {
         diagonal_test::ResetScheduleTrace();
         engine::HandleKeyUp(Key::D, true, g_routedTarget);
-        assert(diagonal_test::ScheduleTraceCount() == 1);
+        assert(diagonal_test::ScheduleTraceCount() == 2);
         assert(diagonal_test::ScheduledKey(0) == Key::A);
         assert(engine::GetState().logical[ki(Key::A)]);
         assert(engine::IsCounterStrafeHoldingKey(Key::A, g_routedTarget));
@@ -286,7 +314,7 @@ void AssertManualCounterBrake(SocdMode mode, Key first, int64_t manualUs,
         AssertSettled();
         return;
     }
-    assert(diagonal_test::ScheduleTraceCount() == 1);
+    assert(diagonal_test::ScheduleTraceCount() == 2);
     assert(diagonal_test::ScheduledKey(0) == brake);
     assert(engine::IsCounterStrafeHoldingKey(brake, g_routedTarget));
     const auto durationUs = diagonal_test::TimerDeadlineUs(brake) - timing::NowUs();
@@ -377,7 +405,7 @@ void AssertWinnerReleaseTimeline(SocdMode mode, Key first, int64_t survivorHoldU
         assert(engine::GetState().logical[ki(first)]);
     }
     assert(engine::GetState().axisState[ai(axis)] == AxisState::None);
-    assert(diagonal_test::ScheduleTraceCount() == (delayed ? 1u : 0u) + 1u);
+    assert(diagonal_test::ScheduleTraceCount() == (delayed ? 1u : 0u) + 2u);
     diagonal_test::AdvanceUs(350000);
     diagonal_test::ExpireDueTimers();
     assert(events.size() == (survivorHoldUs ? 8u : 6u));
@@ -427,6 +455,43 @@ int main() {
     diagonal_test::SetLiveTarget(g_routedTarget);
     AssertSettled();
 
+    // A stalled injection must not consume the counter-key hold interval.
+    {
+        RuntimeConfig config;
+        config.socdMode = SocdMode::OFF;
+        rcfg::Apply(config);
+        engine::HandleKeyDown(Key::A, true, g_routedTarget);
+        diagonal_test::AdvanceUs(200000);
+        g_dispatchDelayUs = 150000;
+        engine::HandleKeyUp(Key::A, true, g_routedTarget);
+        assert(engine::IsCounterStrafeHoldingKey(Key::D, g_routedTarget));
+        const int64_t brakeUs = engine::g_lastBrakeUs.load();
+        assert(diagonal_test::TimerDeadlineUs(Key::D) >= timing::NowUs() + brakeUs);
+        const uint64_t currentId = engine::GetState().expectedTimerId[ki(Key::D)];
+        engine::OnTimerExpired(Key::D, currentId - 1);
+        assert(engine::IsCounterStrafeHoldingKey(Key::D, g_routedTarget));
+        diagonal_test::AdvanceUs(brakeUs);
+        diagonal_test::ExpireDueTimers();
+        AssertSettled();
+        rcfg::Init();
+    }
+
+    // If the release timer cannot be restarted after dispatch, release the
+    // accepted key immediately instead of leaving it held without a timer.
+    {
+        RuntimeConfig config;
+        config.socdMode = SocdMode::OFF;
+        rcfg::Apply(config);
+        diagonal_test::SetTimerSchedulesBeforeFailure(1);
+        engine::HandleKeyDown(Key::A, true, g_routedTarget);
+        diagonal_test::AdvanceUs(200000);
+        engine::HandleKeyUp(Key::A, true, g_routedTarget);
+        assert(diagonal_test::TakeTimer(Key::D) == 0);
+        AssertSettled();
+        diagonal_test::SetTimerSchedulesBeforeFailure(-1);
+        rcfg::Init();
+    }
+
     // Removing Mouse1-triggered braking must not alter normal key-release
     // counter-strafe ordering: release-key overlap expires before counter brake.
     RuntimeConfig normalReleaseConfig = rcfg::Get();
@@ -438,7 +503,7 @@ int main() {
     engine::HandleKeyDown(Key::W, true, g_routedTarget);
     diagonal_test::AdvanceUs(200000);
     engine::HandleKeyUp(Key::W, true, g_routedTarget);
-    assert(diagonal_test::ScheduleTraceCount() == 2);
+    assert(diagonal_test::ScheduleTraceCount() == 4);
     assert(diagonal_test::ScheduledKey(0) == Key::W);
     assert(diagonal_test::ScheduledKey(1) == Key::S);
     const uint64_t normalCounterTimer = diagonal_test::TakeTimer(Key::S);
@@ -489,7 +554,7 @@ int main() {
     engine::HandleKeyDown(Key::W, true, g_routedTarget);
     diagonal_test::AdvanceUs(200000);
     engine::HandleKeyUp(Key::W, true, g_routedTarget);
-    assert(diagonal_test::ScheduleTraceCount() == 2);
+    assert(diagonal_test::ScheduleTraceCount() == 4);
     assert(diagonal_test::ScheduledKey(0) == Key::W);
     Expire(Key::W); Expire(Key::S);
     AssertSettled();
@@ -512,6 +577,8 @@ int main() {
 
     AssertResidualDuration2D();
     for (auto mode : {SocdMode::FULL, SocdMode::HUMANIZED, SocdMode::OFF}) {
+        AssertModifierUpdatesVelocity(mode, true);
+        AssertModifierUpdatesVelocity(mode, false);
         for (auto first : {Key::A, Key::D, Key::W, Key::S})
             for (auto manualUs : {15625LL, 23000LL, 46875LL, 78125LL, 109375LL, 250000LL})
                 for (int shapingCase = 0; shapingCase < 4; ++shapingCase)

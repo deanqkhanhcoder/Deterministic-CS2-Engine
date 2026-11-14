@@ -21,7 +21,6 @@ set(MARCO_COMMON_CORE_SOURCES
     src/core/bhop.cpp
     src/core/config_io.cpp
     src/core/counterstrafe_controller.cpp
-    src/core/debug_logger.cpp
     src/core/injection.cpp
     src/core/syscall_dispatch.cpp
     src/core/input_capture.cpp
@@ -42,6 +41,7 @@ set(MARCO_COMMON_CORE_SOURCES
 )
 set(MARCO_DIAGNOSTIC_CORE_SOURCES
     src/core/analysis_toolkit.cpp
+    src/core/debug_logger.cpp
     src/core/etw_controller.cpp
 )
 
@@ -159,6 +159,10 @@ marco_add_safe_test(marco_test_debug_logger
     src/core/debug_logger.cpp
     tests/integration/debug_logger_stubs.cpp
 )
+marco_add_safe_test(marco_test_release_logging
+    tests/unit/test_release_logging.cpp
+)
+target_compile_definitions(marco_test_release_logging PRIVATE MARCO_RELEASE)
 marco_add_safe_test(marco_test_runtime_config
     tests/integration/test_runtime_config.cpp
     src/core/runtime_config.cpp
@@ -259,6 +263,7 @@ add_custom_target(stress-safe
         marco_test_physics
         marco_test_hybrid
         marco_test_debug_logger
+        marco_test_release_logging
         marco_test_runtime_config
         marco_test_target_publication
         marco_test_bhop_injection_gate
@@ -281,6 +286,7 @@ add_custom_target(check
         marco_test_physics
         marco_test_hybrid
         marco_test_debug_logger
+        marco_test_release_logging
         marco_test_runtime_config
         marco_test_target_publication
         marco_test_bhop_injection_gate

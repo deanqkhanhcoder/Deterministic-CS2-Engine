@@ -78,6 +78,9 @@ static std::atomic<HWND> s_expiryWindow{nullptr};
 struct ExpiredTimer {
     Key key;
     uint64_t id;
+#if MARCO_ENABLE_FORENSIC
+    int64_t expireUs;
+#endif
 };
 static std::mutex s_expiryQueueMutex;
 static std::deque<ExpiredTimer> s_expiryQueue;
@@ -309,7 +312,11 @@ static void TimerThreadFunc(HANDLE wakeEvent) {
             } else {
                 {
                     std::lock_guard<std::mutex> queueLock(s_expiryQueueMutex);
+#if MARCO_ENABLE_FORENSIC
+                    s_expiryQueue.push_back({slot.key, slot.id, slot.expireUs});
+#else
                     s_expiryQueue.push_back({slot.key, slot.id});
+#endif
                 }
                 bool posted = false;
                 while (s_running.load(std::memory_order_acquire)) {
@@ -344,6 +351,13 @@ void DrainExpiredTimers() {
             expired = s_expiryQueue.front();
             s_expiryQueue.pop_front();
         }
+#if MARCO_ENABLE_FORENSIC
+        const int64_t lateUs = NowUs() - expired.expireUs;
+        if (lateUs > 10000) {
+            DLOG_WARN(Timing, "Timer callback delayed: key=%s late=%lld us",
+                      keymap::KeyName[ki(expired.key)], static_cast<long long>(lateUs));
+        }
+#endif
         engine::OnTimerExpired(expired.key, expired.id);
     }
 }

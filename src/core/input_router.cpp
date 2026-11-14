@@ -220,8 +220,10 @@ void OnSysKeyChange(bool isLCtrl, bool down, bool routeSemantic) {
     // PHYSICAL TRUTH
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
+        UpdateVelocityWishFromLogicalState();
         if (isLCtrl) s_state.sysLCtrl = down;
         else         s_state.sysC     = down;
+        UpdateVelocityWishFromLogicalState();
         PublishEngineState();
     }
     
@@ -233,6 +235,7 @@ void OnShiftChange(bool down, bool routeSemantic) {
     // PHYSICAL TRUTH
     {
         std::lock_guard<std::mutex> lock(s_stateMutex);
+        UpdateVelocityWishFromLogicalState();
         if (down) {
             if (!s_state.walk.shiftDown) {
                 s_state.walk.shiftDown = true;
@@ -250,6 +253,7 @@ void OnShiftChange(bool down, bool routeSemantic) {
                 }
             }
         }
+        UpdateVelocityWishFromLogicalState();
         PublishEngineState();
     }
     
